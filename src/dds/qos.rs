@@ -1529,13 +1529,15 @@ pub mod policy {
     }
     impl UserData {
         pub fn serialized_size(&self) -> u16 {
-            4 + self.value.len() as u16
+            let length = self.value.len();
+
+            4 + length as u16 + pad_len(length) as u16
         }
     }
     impl<'a, C: speedy::Context> Readable<'a, C> for UserData {
         #[inline]
         fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
-            let length = reader.read_u16()?;
+            let length = reader.read_u32()?;
             let value = reader.read_vec(length as usize)?;
             // skip padding
             reader.skip_bytes(pad_len(length as usize))?;
@@ -1546,7 +1548,8 @@ pub mod policy {
         #[inline]
         fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
             let len = self.value.len();
-            writer.write_value(&self.value)?;
+            writer.write_u32(len as u32)?;
+            writer.write_bytes(&self.value)?;
             // write padding
             const ZEROS: [u8; 3] = [0; 3];
             writer.write_bytes(&ZEROS[..pad_len(len)])?;
@@ -1560,14 +1563,16 @@ pub mod policy {
     }
     impl TopicData {
         pub fn serialized_size(&self) -> u16 {
-            4 + self.value.len() as u16
+            let length = self.value.len();
+            4 + length as u16 + pad_len(length) as u16
         }
     }
     impl<'a, C: speedy::Context> Readable<'a, C> for TopicData {
         #[inline]
         fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
             let length = reader.read_u16()?;
-            let value = reader.read_vec(length as usize)?;
+            let mut value = vec![0u8; length as usize];
+            reader.read_bytes(&mut value)?;
             // skip padding
             reader.skip_bytes(pad_len(length as usize))?;
             Ok(Self { value })
@@ -1577,8 +1582,8 @@ pub mod policy {
         #[inline]
         fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
             let len = self.value.len();
-            writer.write_u16(len as u16)?;
-            writer.write_value(&self.value)?;
+            writer.write_u32(len as u32)?;
+            writer.write_bytes(&self.value)?;
             // write padding
             const ZEROS: [u8; 3] = [0; 3];
             writer.write_bytes(&ZEROS[..pad_len(len)])?;
@@ -1592,14 +1597,16 @@ pub mod policy {
     }
     impl GroupData {
         pub fn serialized_size(&self) -> u16 {
-            4 + self.value.len() as u16
+            let length = self.value.len();
+            4 + length as u16 + pad_len(length) as u16
         }
     }
     impl<'a, C: speedy::Context> Readable<'a, C> for GroupData {
         #[inline]
         fn read_from<R: speedy::Reader<'a, C>>(reader: &mut R) -> Result<Self, C::Error> {
             let length = reader.read_u16()?;
-            let value = reader.read_vec(length as usize)?;
+            let mut value = vec![0u8; length as usize];
+            reader.read_bytes(&mut value)?;
             // skip padding
             reader.skip_bytes(pad_len(length as usize))?;
             Ok(Self { value })
@@ -1609,8 +1616,8 @@ pub mod policy {
         #[inline]
         fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
             let len = self.value.len();
-            writer.write_u16(len as u16)?;
-            writer.write_value(&self.value)?;
+            writer.write_u32(len as u32)?;
+            writer.write_bytes(&self.value)?;
             // write padding
             const ZEROS: [u8; 3] = [0; 3];
             writer.write_bytes(&ZEROS[..pad_len(len)])?;

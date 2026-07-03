@@ -295,7 +295,7 @@ impl<C: Context> Writable<C> for ReaderProxy {
 
         // user_data
         writer.write_u16(ParameterId::PID_USER_DATA.value)?;
-        writer.write_u16(4 + self.qos.user_data().value.len() as u16)?;
+        writer.write_u16(self.qos.user_data().serialized_size())?;
         writer.write_value(&self.qos.user_data())?;
 
         // ownership
@@ -554,7 +554,7 @@ impl<C: Context> Writable<C> for WriterProxy {
 
         // user_data
         writer.write_u16(ParameterId::PID_USER_DATA.value)?;
-        writer.write_u16(4 + self.qos.user_data().value.len() as u16)?;
+        writer.write_u16(self.qos.user_data().serialized_size())?;
         writer.write_value(&self.qos.user_data())?;
 
         // ownership
