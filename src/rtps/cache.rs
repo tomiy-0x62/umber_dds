@@ -21,10 +21,10 @@ pub struct CacheChange {
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
     inline_qos: Option<ParameterList>,
-    instance_handle: InstantHandle, // In DDS, the value of the fields
-                                    // labeled as ‘key’ within the data
-                                    // uniquely identify each data-
-                                    // object.
+    instance_handle: InstanceHandle, // In DDS, the value of the fields
+                                     // labeled as ‘key’ within the data
+                                     // uniquely identify each data-
+                                     // object.
 }
 
 impl CacheChange {
@@ -35,7 +35,7 @@ impl CacheChange {
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
         inline_qos: Option<ParameterList>,
-        instance_handle: InstantHandle,
+        instance_handle: InstanceHandle,
     ) -> Self {
         Self {
             kind,
@@ -122,7 +122,7 @@ pub enum ChangeKind {
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
-pub struct InstantHandle {/* TODO */}
+pub struct InstanceHandle {/* TODO */}
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct HCKey {

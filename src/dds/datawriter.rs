@@ -11,7 +11,7 @@ use crate::message::submessage::element::{
     RepresentationIdentifier, SequenceNumber, SerializedPayload, Timestamp,
 };
 use crate::rtps::{
-    cache::{AddChangeErr, CacheChange, ChangeKind, HistoryCache, InstantHandle},
+    cache::{AddChangeErr, CacheChange, ChangeKind, HistoryCache, InstanceHandle},
     writer::*,
 };
 use crate::structure::GUID;
@@ -130,7 +130,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             ts,
             Some(serialized_payload),
             None,
-            InstantHandle {},
+            InstanceHandle {},
         );
         loop {
             let write_res = self.whc.write().add_change(

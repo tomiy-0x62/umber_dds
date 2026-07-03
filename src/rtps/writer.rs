@@ -18,7 +18,7 @@ use crate::message::{
 use crate::network::udp_sender::UdpSender;
 use crate::rtps::cache::{
     CacheChange, ChangeForReaderStatusKind, ChangeKind, HCKey, HistoryCache, HistoryCacheType,
-    InstantHandle,
+    InstanceHandle,
 };
 use crate::rtps::reader_locator::ReaderLocator;
 use crate::structure::{
@@ -428,7 +428,7 @@ impl Writer {
             time_stamp,
             Some(builtin_data),
             None,
-            InstantHandle {},
+            InstanceHandle {},
         );
         let mut message_builder = MessageBuilder::new();
         message_builder.info_ts(Endianness::LittleEndian, Some(time_stamp));

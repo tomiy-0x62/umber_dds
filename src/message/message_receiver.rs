@@ -17,7 +17,7 @@ use crate::message::{
 use crate::net_util::*;
 use crate::rtps::cache::{HistoryCache, HistoryCacheType};
 use crate::rtps::{
-    cache::{CacheChange, ChangeKind, InstantHandle},
+    cache::{CacheChange, ChangeKind, InstanceHandle},
     reader::{Reader, ReaderTimer},
     writer::{Writer, WriterTimer},
 };
@@ -369,7 +369,7 @@ impl MessageReceiver {
 
         // TODO: check inlineQos is valid
         if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
-            // he serializedPayload element is interpreted as the value of the dtat-object
+            // the serializedPayload element is interpreted as the value of the dtat-object
         }
         if flag.contains(DataFlag::Key) && !flag.contains(DataFlag::Data) {
             // the serializedPayload element is interpreted as the value of the key that identifies the registered instance of the data-object.
@@ -399,7 +399,7 @@ impl MessageReceiver {
             ts,
             data.serialized_payload.clone(),
             data.inline_qos.clone(),
-            InstantHandle {}, // TODO
+            InstanceHandle {}, // TODO
         );
 
         if data.writer_id == EntityId::SPDP_BUILTIN_PARTICIPANT_ANNOUNCER
