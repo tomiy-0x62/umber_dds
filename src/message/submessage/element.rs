@@ -186,25 +186,6 @@ pub struct Parameter {
     // but it need only deseriarize time
     value: Vec<u8>,
 }
-impl<C: Context> Writable<C> for Parameter {
-    #[inline]
-    fn write_to<T: ?Sized + Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
-        writer.write_value(&self.parameter_id)?;
-
-        let length = self.value.len();
-        let pad_len = pad_len(length);
-        writer.write_u16((length + pad_len) as u16)?;
-
-        for byte in &self.value {
-            writer.write_u8(*byte)?;
-        }
-
-        const ZEROS: [u8; 3] = [0; 3];
-        writer.write_bytes(&ZEROS[..pad_len])?;
-
-        Ok(())
-    }
-}
 
 #[derive(Default, PartialEq)]
 pub struct ParameterList {
@@ -219,12 +200,12 @@ impl<'a, C: Context> Readable<'a, C> for ParameterList {
             match parameter_id {
                 ParameterId::PID_SENTINEL => return Ok(parameter_list),
                 _ => {
-                    let length = u16::read_from(reader)?;
+                    let length = i16::read_from(reader)?;
                     let value = reader.read_vec(length as usize)?;
                     parameter_list.parameters.push(Parameter {
                         parameter_id,
                         value,
-                    })
+                    });
                 }
             }
         }
@@ -236,7 +217,16 @@ impl<C: Context> Writable<C> for ParameterList {
     #[inline]
     fn write_to<T: ?Sized + Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
         for param in self.parameters.iter() {
-            writer.write_value(param)?;
+            writer.write_value(&param.parameter_id)?;
+
+            let length = param.value.len();
+            let pad_len = pad_len(length);
+            writer.write_i16((length + pad_len) as i16)?;
+
+            writer.write_bytes(&param.value)?;
+
+            const ZEROS: [u8; 3] = [0; 3];
+            writer.write_bytes(&ZEROS[..pad_len])?;
         }
 
         writer.write_u32(SENTINEL)?;
