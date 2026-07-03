@@ -1,5 +1,7 @@
 use crate::dds::qos::policy::{History, HistoryQosKind, ResourceLimits, LENGTH_UNLIMITED};
-use crate::message::submessage::element::{SequenceNumber, SerializedPayload, Timestamp};
+use crate::message::submessage::element::{
+    ParameterList, SequenceNumber, SerializedPayload, Timestamp,
+};
 use crate::structure::GUID;
 use alloc::collections::{BTreeMap, BTreeSet};
 use log::{debug, warn};
@@ -18,7 +20,7 @@ pub struct CacheChange {
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
-    // inline_qos: ParameterList,
+    inline_qos: Option<ParameterList>,
     instance_handle: InstantHandle, // In DDS, the value of the fields
                                     // labeled as ‘key’ within the data
                                     // uniquely identify each data-
@@ -32,6 +34,7 @@ impl CacheChange {
         sequence_number: SequenceNumber,
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
+        inline_qos: Option<ParameterList>,
         instance_handle: InstantHandle,
     ) -> Self {
         Self {
@@ -40,6 +43,7 @@ impl CacheChange {
             sequence_number,
             timestamp,
             data_value,
+            inline_qos,
             instance_handle,
         }
     }

@@ -178,7 +178,7 @@ pub struct NumberSet<T> {
     pub bitmap: Vec<u32>,
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Eq, Clone)]
 pub struct Parameter {
     parameter_id: ParameterId,
     // length: i16,
@@ -187,7 +187,7 @@ pub struct Parameter {
     value: Vec<u8>,
 }
 
-#[derive(Default, PartialEq)]
+#[derive(Default, PartialEq, Eq, Clone)]
 pub struct ParameterList {
     parameters: Vec<Parameter>,
 }

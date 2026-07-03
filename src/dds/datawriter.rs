@@ -129,6 +129,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             self.last_change_sequence_number,
             ts,
             Some(serialized_payload),
+            None,
             InstantHandle {},
         );
         loop {

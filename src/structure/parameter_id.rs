@@ -2,7 +2,7 @@ use speedy::{Readable, Writable};
 
 // from jhelovuo/RustDDS(https://github.com/jhelovuo/RustDDS.git), src/structure/parameter_id.rs
 
-#[derive(Readable, Writable, PartialEq, Eq)]
+#[derive(Readable, Writable, PartialEq, Eq, Clone, Copy)]
 pub struct ParameterId {
     pub value: u16,
 }

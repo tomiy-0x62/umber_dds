@@ -398,6 +398,7 @@ impl MessageReceiver {
             data.writer_sn,
             ts,
             data.serialized_payload.clone(),
+            data.inline_qos.clone(),
             InstantHandle {}, // TODO
         );
 

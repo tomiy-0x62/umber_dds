@@ -427,6 +427,7 @@ impl Writer {
             SequenceNumber(1),
             time_stamp,
             Some(builtin_data),
+            None,
             InstantHandle {},
         );
         let mut message_builder = MessageBuilder::new();
