@@ -202,6 +202,28 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             ReliabilityQosKind::BestEffort => false,
         }
     }
+
+    /// Retrieves the key value associated with a given `InstanceHandle`.
+    ///
+    /// In DDS, an `InstanceHandle` uniquely identifies a specific instance of a Topic
+    /// (distinguished by its unique key values). This method allows you to look up the
+    /// actual key data (represented as a `KeyHolder`) that corresponds to a previously
+    /// registered or known handle.
+    ///
+    /// # Arguments
+    ///
+    /// * `handle` - The `InstanceHandle` identifying the specific topic instance.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(W::KeyHolder)` - The generated struct containing the extracted `#[key]` fields
+    ///   if the handle is recognized and currently managed by this `DataWriter`.
+    ///   For types without keys, this returns the unit type `()`.
+    /// * `None` - If the provided `InstanceHandle` is `HANDLE_NIL`, or does not
+    ///   correspond to any active instance known to this `DataWriter`.
+    pub fn get_key_value(_handle: InstanceHandle) -> Option<W::KeyHolder> {
+        todo!();
+    }
 }
 
 impl<W: Writable<Endianness> + DdsData> Evented for DataWriter<W> {

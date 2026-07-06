@@ -5,7 +5,10 @@ use crate::dds::{
     topic::Topic,
 };
 use crate::message::submessage::element::RepresentationIdentifier;
-use crate::rtps::{cache::HistoryCache, reader::DataReaderStatusChanged};
+use crate::rtps::{
+    cache::{HistoryCache, InstanceHandle},
+    reader::DataReaderStatusChanged,
+};
 use crate::structure::GUID;
 use crate::DdsData;
 use alloc::sync::Arc;
@@ -130,6 +133,28 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
     /// Poll DataReader, to ensure get DataReaderStatusChanged.
     pub fn try_recv(&self) -> Result<DataReaderStatusChanged, std::sync::mpsc::TryRecvError> {
         self.reader_state_receiver.try_recv()
+    }
+
+    /// Retrieves the key value associated with a given `InstanceHandle`.
+    ///
+    /// In DDS, an `InstanceHandle` uniquely identifies a specific instance of a Topic
+    /// (distinguished by its unique key values). This method allows you to look up the
+    /// actual key data (represented as a `KeyHolder`) that corresponds to a previously
+    /// registered or known handle.
+    ///
+    /// # Arguments
+    ///
+    /// * `handle` - The `InstanceHandle` identifying the specific topic instance.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(W::KeyHolder)` - The generated struct containing the extracted `#[key]` fields
+    ///   if the handle is recognized and currently managed by this `DataReader`.
+    ///   For types without keys, this returns the unit type `()`.
+    /// * `None` - If the provided `InstanceHandle` is `HANDLE_NIL`, or does not
+    ///   correspond to any active instance known to this `DataReader`.
+    pub fn get_key_value(_handle: InstanceHandle) -> Option<R::KeyHolder> {
+        todo!();
     }
 }
 

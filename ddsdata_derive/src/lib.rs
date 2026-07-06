@@ -5,7 +5,7 @@ use syn::{parse_macro_input, Data, DataStruct, DeriveInput, Fields, LitStr};
 
 /// Derives the `DdsData` trait for a struct, providing DDS key generation and type naming.
 ///
-/// This macro automatically implements the `gen_key`, `type_name`, and `is_with_key`
+/// This macro automatically implements the `gen_key`, `gen_key_holder`, `type_name`, and `is_with_key`
 /// functions required for DDS communication. Note that these methods are primarily
 /// intended for internal use by the library.
 ///
@@ -19,6 +19,12 @@ use syn::{parse_macro_input, Data, DataStruct, DeriveInput, Fields, LitStr};
 /// * `#[key]`: Marks a field as part of the DDS Key. Can be applied to multiple fields.
 /// * `#[dds_data(type_name = "CustomName")]`: (Optional) Overrides the default type name.
 ///   If omitted, the struct's exact Rust identifier is used.
+///
+/// ## KeyHolder Generation (`gen_key_holder`)
+/// To support DDS Instances, the macro extracts fields marked with `#[key]` into a separate
+/// public struct named `{StructName}KeyHolder`.
+/// * This generated struct automatically implements `speedy::Writable`, `Clone`, `Debug`, and `PartialEq`.
+/// * If no fields are marked with `#[key]`, the associated `KeyHolder` type defaults to the unit type `()`.
 ///
 /// ## Key Generation Logic (`gen_key`)
 /// When calculating the `KeyHash`, the macro extracts fields marked with `#[key]`,
@@ -67,23 +73,17 @@ pub fn derive_ddsdata(input: TokenStream) -> TokenStream {
     };
 
     let keys_count = keys.len();
-
     let is_with_key_val = keys_count != 0;
 
-    let gen_key_body = if keys_count == 0 {
-        quote! {
-            None
-        }
+    let (key_holder_type, key_holder_def, gen_key_holder_body, gen_key_body) = if keys_count == 0 {
+        (quote! { () }, quote! {}, quote! { None }, quote! { None })
     } else {
-        // create wrapper struct for gen_key().
-        let wrapper_name = syn::Ident::new(&format!("{}KeyWrapper", name), name.span());
+        let wrapper_name = syn::Ident::new(&format!("{}KeyHolder", name), name.span());
 
-        // definition of wrapper struct field
         let wrapper_fields = keys.iter().map(|(ident, ty)| {
-            quote! { #ident: #ty }
+            quote! { pub #ident: #ty }
         });
 
-        // initialization of wrapper struct field
         let wrapper_init = keys.iter().map(|(ident, _ty)| {
             quote! { #ident: self.#ident.clone() }
         });
@@ -93,9 +93,9 @@ pub fn derive_ddsdata(input: TokenStream) -> TokenStream {
             quote! { #write_stmt }
         });
 
-        quote! {
-            #[derive(Clone)]
-            struct #wrapper_name {
+        let def = quote! {
+            #[derive(Clone, Debug, PartialEq)]
+            pub struct #wrapper_name {
                 #(#wrapper_fields),*
             }
 
@@ -107,11 +107,16 @@ pub fn derive_ddsdata(input: TokenStream) -> TokenStream {
                     Ok(())
                 }
             }
+        };
 
-            let wrapper = #wrapper_name {
+        let holder_body = quote! {
+            Some(#wrapper_name {
                 #(#wrapper_init),*
-            };
+            })
+        };
 
+        let key_body = quote! {
+            let wrapper = self.gen_key_holder()?;
             let mut result = wrapper.write_to_vec_with_ctx(speedy::Endianness::BigEndian).unwrap();
 
             let rlen = result.len();
@@ -124,13 +129,23 @@ pub fn derive_ddsdata(input: TokenStream) -> TokenStream {
                 let md5 = md5::compute(result);
                 Some(KeyHash::new(&md5.0))
             }
-        }
+        };
+
+        (quote! { #wrapper_name }, def, holder_body, key_body)
     };
 
     let expanded = quote! {
+        #key_holder_def
+
         impl DdsData for #name {
+            type KeyHolder = #key_holder_type;
+
             fn gen_key(&self) -> Option<KeyHash> {
                 #gen_key_body
+            }
+
+            fn gen_key_holder(&self) -> Option<Self::KeyHolder> {
+                #gen_key_holder_body
             }
 
             fn type_name() -> String {
