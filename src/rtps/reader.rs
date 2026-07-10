@@ -21,7 +21,6 @@ use alloc::rc::Rc;
 use alloc::sync::Arc;
 use awkernel_sync::rwlock::RwLock;
 use core::net::Ipv4Addr;
-use core::time::Duration as StdDuration;
 use core::time::Duration as CoreDuration;
 use enumflags2::BitFlags;
 use log::{debug, error, info, trace, warn};
@@ -851,8 +850,8 @@ impl Reader {
         info!("Reader requested deadline missed\n\tReader: {}", self.guid);
     }
 
-    pub fn heartbeat_response_delay(&self) -> StdDuration {
-        StdDuration::new(
+    pub fn heartbeat_response_delay(&self) -> CoreDuration {
+        CoreDuration::new(
             self.heartbeat_response_delay.seconds as u64,
             self.heartbeat_response_delay.fraction,
         )
@@ -901,7 +900,7 @@ impl Reader {
         }
     }
 
-    pub fn get_min_remote_writer_lease_duration(&self) -> StdDuration {
+    pub fn get_min_remote_writer_lease_duration(&self) -> CoreDuration {
         let mut min_ld = Duration::INFINITE;
         for wp in self.matched_writers.values() {
             let wld = wp.qos.liveliness().lease_duration;
@@ -910,9 +909,9 @@ impl Reader {
             }
         }
         if min_ld == Duration::INFINITE {
-            StdDuration::new(10, 0)
+            CoreDuration::new(10, 0)
         } else {
-            StdDuration::new(min_ld.seconds as u64, min_ld.fraction)
+            CoreDuration::new(min_ld.seconds as u64, min_ld.fraction)
         }
     }
 
