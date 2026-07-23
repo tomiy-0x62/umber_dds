@@ -33,6 +33,7 @@ pub struct DataWriter<W: Writable<Endianness> + DdsData> {
     qos: DataWriterQosPolicies,
     topic: Topic,
     publisher: Publisher,
+    is_keyed: bool,
     whc: Arc<RwLock<HistoryCache>>,
     // last_change_sequence_numberは本来はWriter::new_change()でのCacheChangeの作成時に使用するRTPS Writerのメンバ
     // 本実装ではDataWrtierとRTPS Writerが別スレッドに配置されるため、DataWriterはRTPS Writerのnew_changeを叩けない。
@@ -73,6 +74,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             qos,
             topic,
             publisher,
+            is_keyed: W::is_with_key(),
             whc,
             last_change_sequence_number: SequenceNumber(0),
             writer_command_sender,
@@ -130,7 +132,6 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             ts,
             Some(serialized_payload),
             None,
-            InstanceHandle {},
         );
         loop {
             let write_res = self.whc.write().add_change(

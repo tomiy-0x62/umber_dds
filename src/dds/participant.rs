@@ -12,7 +12,7 @@ use crate::message::{
     submessage::element::{Locator, RepresentationIdentifier, SerializedPayload},
 };
 use crate::network::{net_util::*, udp_sender::UdpSender};
-use crate::rtps::reader::ReaderIngredients;
+use crate::rtps::reader::ReaderIngredientsType;
 use crate::rtps::writer::WriterIngredients;
 use crate::structure::{RTPSEntity, VendorId};
 use crate::{
@@ -65,7 +65,7 @@ struct EvLoopIngredients {
     socket_list: BTreeMap<mio_v06::Token, UdpSocket>,
     udp_sender: UdpSender,
     create_writer_receiver: mio_extras::channel::Receiver<WriterIngredients>,
-    create_reader_receiver: mio_extras::channel::Receiver<ReaderIngredients>,
+    create_reader_receiver: mio_extras::channel::Receiver<Box<dyn ReaderIngredientsType>>,
 }
 
 impl DomainParticipant {
@@ -261,7 +261,7 @@ pub(crate) struct DomainParticipantInner {
     participant_id: u16,
     pub my_guid: GUID,
     create_writer_sender: mio_channel::SyncSender<WriterIngredients>,
-    create_reader_sender: mio_channel::SyncSender<ReaderIngredients>,
+    create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
     ev_loop_handler: Option<thread::JoinHandle<()>>,
     discovery_handler: Option<thread::JoinHandle<()>>,
     entity_key_generator: AtomicU32,
@@ -338,7 +338,7 @@ impl DomainParticipantInner {
         let (create_writer_sender, create_writer_receiver) =
             mio_channel::sync_channel::<WriterIngredients>(10);
         let (create_reader_sender, create_reader_receiver) =
-            mio_channel::sync_channel::<ReaderIngredients>(10);
+            mio_channel::sync_channel::<Box<dyn ReaderIngredientsType>>(10);
 
         let my_guid = GUID::new_participant_guid(small_rng);
 

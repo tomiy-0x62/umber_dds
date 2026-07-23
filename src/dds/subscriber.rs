@@ -8,12 +8,13 @@ use crate::message::submessage::element::Locator;
 use crate::network::net_util::{usertraffic_multicast_port, usertraffic_unicast_port};
 use crate::rtps::{
     cache::{HistoryCache, HistoryCacheType},
-    reader::{DataReaderStatusChanged, ReaderIngredients},
+    reader::{DataReaderStatusChanged, ReaderIngredients, ReaderIngredientsType},
 };
 use crate::structure::{EntityId, EntityKind, RTPSEntity, TopicKind, GUID};
 use crate::DdsData;
 use alloc::sync::Arc;
 use awkernel_sync::rwlock::RwLock;
+use core::marker::PhantomData;
 use log::info;
 use mio_extras::channel as mio_channel;
 use speedy::{Endianness, Readable};
@@ -31,14 +32,12 @@ impl Subscriber {
         guid: GUID,
         qos: SubscriberQosPolicies,
         dp: DomainParticipant,
-        create_reader_sender: mio_channel::SyncSender<ReaderIngredients>,
+        create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
     ) -> Self {
-        let default_dr_qos = DataReaderQosBuilder::new().build();
         Self {
             inner: Arc::new(RwLock::new(InnerSubscriber::new(
                 guid,
                 qos,
-                default_dr_qos,
                 dp,
                 create_reader_sender,
             ))),
@@ -86,7 +85,7 @@ impl Subscriber {
     /// ```ignore
     /// subscriber.create_datareader::<Hoge>(subscriber.get_default_datareader_qos(), &topic)
     /// ```
-    pub fn create_datareader<R: for<'a> Readable<'a, Endianness> + DdsData>(
+    pub fn create_datareader<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
         &self,
         qos: DataReaderQos,
         topic: Topic,
@@ -106,12 +105,14 @@ impl Subscriber {
     /// registered during the initialization phase.
     ///
     /// See [`Self::create_datareader`] for a note of qos.
-    pub(crate) fn create_builtin_datareader<R: for<'a> Readable<'a, Endianness> + DdsData>(
+    pub(crate) fn create_builtin_datareader<
+        R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static,
+    >(
         &self,
         qos: DataReaderQos,
         topic: Topic,
         entity_id: EntityId,
-    ) -> (DataReader<R>, ReaderIngredients) {
+    ) -> (DataReader<R>, Box<dyn ReaderIngredientsType>) {
         self.inner
             .read()
             .create_builtin_datareader(qos, topic, self.clone(), entity_id)
@@ -131,9 +132,9 @@ impl Subscriber {
     }
 }
 
-#[allow(dead_code)]
-struct InnerSubscriber {
-    guid: GUID,
+#[derive(Clone)]
+pub struct InnerSubscriber {
+    _guid: GUID,
     // rtps 2.3 spec 8.2.4.4
     // The DDS Specification defines Publisher and Subscriber entities.
     // These two entities have GUIDs that are defined exactly
@@ -141,20 +142,21 @@ struct InnerSubscriber {
     qos: SubscriberQosPolicies,
     default_dr_qos: DataReaderQosPolicies,
     dp: DomainParticipant,
-    create_reader_sender: mio_channel::SyncSender<ReaderIngredients>,
+    create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
 }
 
 impl InnerSubscriber {
-    fn new(
+    pub(crate) fn new(
         guid: GUID,
         qos: SubscriberQosPolicies,
-        default_dr_qos: DataReaderQosPolicies,
         dp: DomainParticipant,
-        create_reader_sender: mio_channel::SyncSender<ReaderIngredients>,
+        create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
     ) -> Self {
         info!("created new Subscriber {}", guid);
+        let default_dr_qos = DataReaderQosBuilder::new().build();
+
         Self {
-            guid,
+            _guid: guid,
             qos,
             default_dr_qos,
             dp,
@@ -170,7 +172,7 @@ impl InnerSubscriber {
         self.qos = qos
     }
 
-    fn create_datareader<R: for<'a> Readable<'a, Endianness> + DdsData>(
+    fn create_datareader<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
         &self,
         qos: DataReaderQos,
         topic: Topic,
@@ -188,23 +190,27 @@ impl InnerSubscriber {
         dr
     }
 
-    fn create_builtin_datareader<R: for<'a> Readable<'a, Endianness> + DdsData>(
+    pub(crate) fn create_builtin_datareader<
+        R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static,
+    >(
         &self,
         qos: DataReaderQos,
         topic: Topic,
         subscriber: Subscriber,
         entity_id: EntityId,
-    ) -> (DataReader<R>, ReaderIngredients) {
+    ) -> (DataReader<R>, Box<dyn ReaderIngredientsType>) {
         self.create_datareader_with_entityid(qos, topic, subscriber, entity_id)
     }
 
-    fn create_datareader_with_entityid<R: for<'a> Readable<'a, Endianness> + DdsData>(
+    fn create_datareader_with_entityid<
+        R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static,
+    >(
         &self,
         qos: DataReaderQos,
         topic: Topic,
         subscriber: Subscriber,
         entity_id: EntityId,
-    ) -> (DataReader<R>, ReaderIngredients) {
+    ) -> (DataReader<R>, Box<dyn ReaderIngredientsType>) {
         let dr_qos = match qos {
             // DDS 1.4 spec, 2.2.2.5.2.5 create_datareader
             // > The special value DATAREADER_QOS_DEFAULT can be used to indicate that the DataReader should be created with the
@@ -238,6 +244,7 @@ impl InnerSubscriber {
         );
         let reader_guid = GUID::new(self.dp.guid_prefix(), entity_id);
         let reader_ing = ReaderIngredients {
+            data_type: PhantomData::<R>,
             guid: reader_guid,
             reliability_level,
             unicast_locator_list,
@@ -261,7 +268,7 @@ impl InnerSubscriber {
                 history_cache,
                 reader_state_receiver,
             ),
-            reader_ing,
+            Box::new(reader_ing),
         )
     }
 

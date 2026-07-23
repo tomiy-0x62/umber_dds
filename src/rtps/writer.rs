@@ -18,14 +18,12 @@ use crate::message::{
 use crate::network::udp_sender::UdpSender;
 use crate::rtps::cache::{
     CacheChange, ChangeForReaderStatusKind, ChangeKind, HCKey, HistoryCache, HistoryCacheType,
-    InstanceHandle,
 };
 use crate::rtps::reader_locator::ReaderLocator;
 use crate::structure::{
     Duration, EntityId, GuidPrefix, RTPSEntity, ReaderProxy, TopicKind, WriterProxy, GUID,
 };
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::rc::Rc;
 use alloc::sync::Arc;
 use awkernel_sync::rwlock::RwLock;
 use core::net::Ipv4Addr;
@@ -68,7 +66,7 @@ pub struct Writer {
     pub writer_command_receiver: mio_channel::Receiver<WriterCmd>,
     writer_state_notifier: mio_channel::Sender<DataWriterStatusChanged>,
     participant_msg_cmd_sender: mio_channel::SyncSender<ParticipantMessageCmd>,
-    udp_sender: Rc<UdpSender>,
+    udp_sender: Arc<UdpSender>,
     hb_counter: Count,
     an_state: AckNackState,
     unmatch_count: i32,
@@ -83,7 +81,7 @@ enum AckNackState {
 }
 
 impl Writer {
-    pub fn new(wi: WriterIngredients, udp_sender: Rc<UdpSender>) -> (Self, Option<WriterTimer>) {
+    pub fn new(wi: WriterIngredients, udp_sender: Arc<UdpSender>) -> (Self, Option<WriterTimer>) {
         let mut msg = String::new();
         msg += "\tunicast locators\n";
         for loc in &wi.unicast_locator_list {
@@ -428,7 +426,6 @@ impl Writer {
             time_stamp,
             Some(builtin_data),
             None,
-            InstanceHandle {},
         );
         let mut message_builder = MessageBuilder::new();
         message_builder.info_ts(Endianness::LittleEndian, Some(time_stamp));

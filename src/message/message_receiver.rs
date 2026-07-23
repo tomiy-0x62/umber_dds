@@ -17,11 +17,12 @@ use crate::message::{
 use crate::net_util::*;
 use crate::rtps::cache::{HistoryCache, HistoryCacheType};
 use crate::rtps::{
-    cache::{CacheChange, ChangeKind, InstanceHandle},
-    reader::{Reader, ReaderTimer},
+    cache::{CacheChange, ChangeKind},
+    reader::{ReaderTimer, RtpsReader},
     writer::{Writer, WriterTimer},
 };
 use crate::structure::{EntityId, GuidPrefix, VendorId, GUID};
+use crate::DdsData;
 use alloc::collections::BTreeMap;
 use alloc::fmt;
 use alloc::sync::Arc;
@@ -108,7 +109,7 @@ impl MessageReceiver {
         &mut self,
         messages: Vec<UdpMessage>,
         writers: &mut BTreeMap<EntityId, Writer>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Option<Vec<ReaderTimer>> {
         let mut rtv = Vec::new();
         for message in messages {
@@ -159,7 +160,7 @@ impl MessageReceiver {
         &mut self,
         rtps_msg: Message,
         writers: &mut BTreeMap<EntityId, Writer>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Option<Vec<ReaderTimer>> {
         self.reset();
         self.dest_guid_prefix = self.own_guid_prefix;
@@ -208,7 +209,7 @@ impl MessageReceiver {
         &mut self,
         entity_subm: EntitySubmessage,
         writers: &mut BTreeMap<EntityId, Writer>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<Option<Vec<ReaderTimer>>, MessageError> {
         match entity_subm {
             EntitySubmessage::AckNack(acknack, flags) => self
@@ -342,7 +343,7 @@ impl MessageReceiver {
         &mut self,
         data: Data,
         flag: BitFlags<DataFlag>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
         writers: &mut BTreeMap<EntityId, Writer>,
     ) -> Result<Option<Vec<ReaderTimer>>, MessageError> {
         // rtps 2.3 spec 8.3.7.2 Data
@@ -399,7 +400,6 @@ impl MessageReceiver {
             ts,
             data.serialized_payload.clone(),
             data.inline_qos.clone(),
-            InstanceHandle {}, // TODO
         );
 
         if data.writer_id == EntityId::SPDP_BUILTIN_PARTICIPANT_ANNOUNCER
@@ -411,17 +411,17 @@ impl MessageReceiver {
             || data.reader_id == EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR
         {
             // if msg is for SEDP(w)
-            self.handle_sedp_w_data(data, change, ts, readers)?;
+            self.handle_sedp_w_data::<SDPBuiltinData>(data, change, ts, readers)?;
         } else if data.writer_id == EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER
             || data.reader_id == EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR
         {
             // if msg is for SEDP(r)
-            self.handle_sedp_r_data(data, change, writers, readers)?;
+            self.handle_sedp_r_data::<SDPBuiltinData>(data, change, writers, readers)?;
         } else if data.writer_id == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER
             || data.reader_id == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER
         {
             // if ParticipantMessage
-            self.handle_participant_message(data, change, ts, readers)?;
+            self.handle_participant_message::<ParticipantMessageData>(data, change, ts, readers)?;
         } else if data.reader_id == EntityId::UNKNOW {
             for reader in readers.values_mut() {
                 if reader.is_contain_writer(writer_guid) {
@@ -471,7 +471,7 @@ impl MessageReceiver {
         guid_prefix: GuidPrefix,
         spdp_data: SPDPdiscoveredParticipantData,
         writers: &mut BTreeMap<EntityId, Writer>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) {
         trace!("handle_participant_discovery: {}", guid_prefix);
         trace!("spdp_data: {:?}", spdp_data);
@@ -667,7 +667,7 @@ impl MessageReceiver {
         data: Data,
         _change: CacheChange,
         writers: &mut BTreeMap<EntityId, Writer>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         let mut deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
             let bytes = sp.to_bytes();
@@ -762,12 +762,12 @@ impl MessageReceiver {
         */
         Ok(())
     }
-    fn handle_sedp_w_data(
+    fn handle_sedp_w_data<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
         &mut self,
         data: Data,
         change: CacheChange,
         ts: Timestamp,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         let mut deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
             let bytes = sp.to_bytes();
@@ -869,7 +869,9 @@ impl MessageReceiver {
             }
         }
         match readers.get_mut(&EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR) {
-            Some(r) => r.add_change(self.source_guid_prefix, change),
+            Some(r) => {
+                r.add_change(self.source_guid_prefix, change);
+            }
             None => {
                 return Err(MessageError::Error(
                     "not find sedp_builtin_publication_reader".to_string(),
@@ -878,12 +880,12 @@ impl MessageReceiver {
         };
         Ok(())
     }
-    fn handle_sedp_r_data(
+    fn handle_sedp_r_data<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
         &self,
         data: Data,
         change: CacheChange,
         writers: &mut BTreeMap<EntityId, Writer>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         let mut deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
             let bytes = sp.to_bytes();
@@ -976,7 +978,9 @@ impl MessageReceiver {
             }
         }
         match readers.get_mut(&EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR) {
-            Some(r) => r.add_change(self.source_guid_prefix, change),
+            Some(r) => {
+                r.add_change(self.source_guid_prefix, change);
+            }
             None => {
                 return Err(MessageError::Error(
                     "not find sedp_builtin_subscription_reader".to_string(),
@@ -985,12 +989,14 @@ impl MessageReceiver {
         };
         Ok(())
     }
-    fn handle_participant_message(
+    fn handle_participant_message<
+        R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static,
+    >(
         &mut self,
         data: Data,
         change: CacheChange,
         ts: Timestamp,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         let deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
             let bytes = sp.to_bytes();
@@ -1088,7 +1094,7 @@ impl MessageReceiver {
         &self,
         gap: Gap,
         flag: BitFlags<GapFlag>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         // rtps 2.3 spec 8.3.7.4 Gap
 
@@ -1129,7 +1135,7 @@ impl MessageReceiver {
         &mut self,
         heartbeat: Heartbeat,
         flag: BitFlags<HeartbeatFlag>,
-        readers: &mut BTreeMap<EntityId, Reader>,
+        readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         // rtps 2.3 spec 8.3.7.5 Heartbeat
 

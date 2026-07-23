@@ -56,11 +56,11 @@ pub struct BuiltinEndpointsIngredients {
     pub spdp_builtin_participant_writer_ing: WriterIngredients,
     // pub spdp_builtin_participant_reader_ing: ReaderIngredients,
     pub sedp_builtin_pub_writer_ing: WriterIngredients,
-    pub sedp_builtin_pub_reader_ing: ReaderIngredients,
+    pub sedp_builtin_pub_reader_ing: ReaderIngredients<SDPBuiltinData>,
     pub sedp_builtin_sub_writer_ing: WriterIngredients,
-    pub sedp_builtin_sub_reader_ing: ReaderIngredients,
+    pub sedp_builtin_sub_reader_ing: ReaderIngredients<SDPBuiltinData>,
     pub p2p_builtin_participant_msg_writer_ing: WriterIngredients,
-    pub p2p_builtin_participant_msg_reader_ing: ReaderIngredients,
+    pub p2p_builtin_participant_msg_reader_ing: ReaderIngredients<ParticipantMessageData>,
 }
 
 pub fn create_builtin_endpoints(
@@ -206,11 +206,23 @@ pub fn create_builtin_endpoints(
         spdp_builtin_participant_writer_ing,
         // spdp_builtin_participant_reader_ing,
         sedp_builtin_pub_writer_ing,
-        sedp_builtin_pub_reader_ing,
+        sedp_builtin_pub_reader_ing: sedp_builtin_pub_reader_ing
+            .as_any()
+            .downcast_ref::<ReaderIngredients<SDPBuiltinData>>()
+            .unwrap()
+            .clone(),
         sedp_builtin_sub_writer_ing,
-        sedp_builtin_sub_reader_ing,
+        sedp_builtin_sub_reader_ing: sedp_builtin_sub_reader_ing
+            .as_any()
+            .downcast_ref::<ReaderIngredients<SDPBuiltinData>>()
+            .unwrap()
+            .clone(),
         p2p_builtin_participant_msg_writer_ing,
-        p2p_builtin_participant_msg_reader_ing,
+        p2p_builtin_participant_msg_reader_ing: p2p_builtin_participant_msg_reader_ing
+            .as_any()
+            .downcast_ref::<ReaderIngredients<ParticipantMessageData>>()
+            .unwrap()
+            .clone(),
     };
     (be, be_ing)
 }

@@ -1,3 +1,4 @@
+use crate::dds::key::KeyHash;
 use crate::dds::qos::policy::{History, HistoryQosKind, ResourceLimits, LENGTH_UNLIMITED};
 use crate::message::submessage::element::{
     ParameterList, SequenceNumber, SerializedPayload, Timestamp,
@@ -21,10 +22,10 @@ pub struct CacheChange {
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
     inline_qos: Option<ParameterList>,
-    instance_handle: InstanceHandle, // In DDS, the value of the fields
-                                     // labeled as ‘key’ within the data
-                                     // uniquely identify each data-
-                                     // object.
+    // instance_handle: InstanceHandle, // In DDS, the value of the fields
+    // labeled as ‘key’ within the data
+    // uniquely identify each data-
+    // object.
 }
 
 impl CacheChange {
@@ -35,7 +36,7 @@ impl CacheChange {
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
         inline_qos: Option<ParameterList>,
-        instance_handle: InstanceHandle,
+        // instance_handle: InstanceHandle,
     ) -> Self {
         Self {
             kind,
@@ -44,7 +45,7 @@ impl CacheChange {
             timestamp,
             data_value,
             inline_qos,
-            instance_handle,
+            // instance_handle,
         }
     }
 
@@ -190,6 +191,8 @@ pub(crate) struct HistoryCache {
     pub last_added: BTreeMap<GUID, Timestamp>,
     min_seq_num: Option<SequenceNumber>,
     max_seq_num: Option<SequenceNumber>,
+    next_ih: u32,
+    kh2ih: BTreeMap<KeyHash, InstanceHandle>,
 }
 
 // life cycle of CacheChange on WriterCache
@@ -215,6 +218,19 @@ impl HistoryCache {
             ready_key: BTreeSet::new(),
             min_seq_num: None,
             max_seq_num: None,
+            next_ih: 0x10,
+            kh2ih: BTreeMap::new(),
+            // ih2k: BTreeMap::new(),
+        }
+    }
+    pub fn key_hash2instance_handle(&mut self, keyhash: KeyHash) -> InstanceHandle {
+        if let Some(ih) = self.kh2ih.get(&keyhash) {
+            *ih
+        } else {
+            let ih = InstanceHandle::new(self.next_ih);
+            self.kh2ih.insert(keyhash, ih);
+            self.next_ih += 1;
+            ih
         }
     }
     pub fn add_empty_change(&mut self, guid: GUID) {

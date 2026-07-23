@@ -1,11 +1,12 @@
 use speedy::{Endianness, Writable};
 
-#[derive(Debug)]
+#[derive(Debug, PartialOrd, PartialEq, Ord, Eq)]
 pub struct KeyHash {
     _hash: [u8; 16],
 }
 
 impl KeyHash {
+    pub const ZERO: Self = Self { _hash: [0; 16] };
     pub fn new(bytes: &[u8]) -> Self {
         let mut hash_in = [0u8; 16];
         hash_in.copy_from_slice(bytes);
@@ -45,7 +46,7 @@ impl KeyHash {
 /// You can specify key to any type that implements the [`Key`] trait.
 /// If some key is specified, you need to import `cdr::{CdrBe, Infinite}`
 pub trait DdsData {
-    type KeyHolder;
+    type KeyHolder: Send;
     fn gen_key(&self) -> Option<KeyHash>;
     fn gen_key_holder(&self) -> Option<Self::KeyHolder>;
     /// Return type name of Topic.

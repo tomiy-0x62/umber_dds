@@ -9,11 +9,11 @@ use crate::discovery::{
     BuiltinEndpointsIngredients, DiscoveryDBUpdateNotifier,
 };
 use crate::rtps::cache::HCKey;
-use crate::rtps::reader::{Reader, ReaderIngredients, ReaderTimer};
+use crate::rtps::reader::{ReaderIngredientsType, ReaderTimer, RtpsReader};
 use crate::rtps::writer::{Writer, WriterIngredients, WriterTimer};
 use crate::structure::{Duration, EntityId, GuidPrefix, RTPSEntity, GUID};
 use alloc::collections::BTreeMap;
-use alloc::rc::Rc;
+use alloc::sync::Arc;
 use bytes::BytesMut;
 use core::time::Duration as CoreDuration;
 use log::{error, info, trace};
@@ -41,14 +41,14 @@ pub struct EventLoop {
     // receive writer ingredients from publisher
     create_writer_receiver: mio_channel::Receiver<WriterIngredients>,
     // receive writer ingredients from subscriber
-    create_reader_receiver: mio_channel::Receiver<ReaderIngredients>,
+    create_reader_receiver: mio_channel::Receiver<Box<dyn ReaderIngredientsType>>,
     // notify new writer to discovery module
     notify_new_writer_sender: mio_channel::Sender<(EntityId, DiscoveredWriterData)>,
     // notify new reader to discovery module
     notify_new_reader_sender: mio_channel::Sender<(EntityId, DiscoveredReaderData)>,
     writers: BTreeMap<EntityId, Writer>,
-    readers: BTreeMap<EntityId, Reader>,
-    udp_sender: Rc<UdpSender>,
+    readers: BTreeMap<EntityId, Box<dyn RtpsReader>>,
+    udp_sender: Arc<UdpSender>,
     writer_hb_timer: Timer<EntityId>,
     reader_hb_timer: Timer<(EntityId, GUID)>, // (reader EntityId, writer GUID)
     reader_deadline_timer: Timer<((EntityId, GUID), CoreDuration)>, // (reader EntityId, writer GUID)
@@ -77,14 +77,14 @@ impl EventLoop {
         udp_sender: UdpSender,
         participant_guidprefix: GuidPrefix,
         create_writer_receiver: mio_channel::Receiver<WriterIngredients>,
-        create_reader_receiver: mio_channel::Receiver<ReaderIngredients>,
+        create_reader_receiver: mio_channel::Receiver<Box<dyn ReaderIngredientsType>>,
         notify_new_writer_sender: mio_channel::Sender<(EntityId, DiscoveredWriterData)>,
         notify_new_reader_sender: mio_channel::Sender<(EntityId, DiscoveredReaderData)>,
         discovery_db: DiscoveryDB,
         discdb_update_receiver: mio_channel::Receiver<DiscoveryDBUpdateNotifier>,
         spdp_data: SerializedPayload,
         builtin_endpoints_ingredients: BuiltinEndpointsIngredients,
-    ) -> EventLoop {
+    ) -> Self {
         let poll = Poll::new().unwrap();
         for (token, lister) in &mut sockets {
             poll.register(lister, *token, Ready::readable(), PollOpt::edge())
@@ -215,7 +215,7 @@ impl EventLoop {
             notify_new_reader_sender,
             writers: BTreeMap::new(),
             readers: BTreeMap::new(),
-            udp_sender: Rc::new(udp_sender),
+            udp_sender: Arc::new(udp_sender),
             writer_hb_timer,
             reader_hb_timer,
             reader_deadline_timer,
@@ -244,11 +244,17 @@ impl EventLoop {
         self.register_writer(builtin_endpoints_ingredients.spdp_builtin_participant_writer_ing);
         // self.register_reader(builtin_endpoints_ingredients.spdp_builtin_participant_reader_ing);
         self.register_writer(builtin_endpoints_ingredients.sedp_builtin_pub_writer_ing);
-        self.register_reader(builtin_endpoints_ingredients.sedp_builtin_pub_reader_ing);
+        self.register_reader(Box::new(
+            builtin_endpoints_ingredients.sedp_builtin_pub_reader_ing,
+        ));
         self.register_writer(builtin_endpoints_ingredients.sedp_builtin_sub_writer_ing);
-        self.register_reader(builtin_endpoints_ingredients.sedp_builtin_sub_reader_ing);
+        self.register_reader(Box::new(
+            builtin_endpoints_ingredients.sedp_builtin_sub_reader_ing,
+        ));
         self.register_writer(builtin_endpoints_ingredients.p2p_builtin_participant_msg_writer_ing);
-        self.register_reader(builtin_endpoints_ingredients.p2p_builtin_participant_msg_reader_ing);
+        self.register_reader(Box::new(
+            builtin_endpoints_ingredients.p2p_builtin_participant_msg_reader_ing,
+        ));
     }
 
     fn handle_set_reader_timer(&mut self, reader_timers: &[ReaderTimer]) {
@@ -482,15 +488,17 @@ impl EventLoop {
                                     reader.check_liveliness(&mut self.discovery_db);
                                     trace!(
                                         "checked liveliness of Reader\n\tReader: {}",
-                                        reader.entity_id()
+                                        reader.get_guid().entity_id
                                     );
                                     let time = reader.get_min_remote_writer_lease_duration();
-                                    let to = self.wlp_timer.set_timeout(time, reader.entity_id());
-                                    self.wlp_timeouts.insert(reader.entity_id(), to);
+                                    let to = self
+                                        .wlp_timer
+                                        .set_timeout(time, reader.get_guid().entity_id);
+                                    self.wlp_timeouts.insert(reader.get_guid().entity_id, to);
                                     trace!(
                                         "set Reader liveliness check timer({:?})\n\tReader: {}",
                                         time,
-                                        reader.entity_id()
+                                        reader.get_guid().entity_id
                                     );
                                 } else {
                                     error!("not found Reader from EventLoop.readers which fired check liveliness timer\n\tReader: {}", eid);
@@ -582,14 +590,17 @@ impl EventLoop {
                             while let Ok(reader_eid) = self.wlp_timer_receiver.try_recv() {
                                 if let Some(reader) = self.readers.get_mut(&reader_eid) {
                                     let min_ld = reader.get_min_remote_writer_lease_duration();
-                                    if let Some(to) = self.wlp_timeouts.get_mut(&reader.entity_id())
+                                    if let Some(to) =
+                                        self.wlp_timeouts.get_mut(&reader.get_guid().entity_id)
                                     {
                                         self.wlp_timer.cancel_timeout(to);
                                         reader.check_liveliness(&mut self.discovery_db);
                                     }
-                                    let timeout =
-                                        self.wlp_timer.set_timeout(min_ld, reader.entity_id());
-                                    self.wlp_timeouts.insert(reader.entity_id(), timeout);
+                                    let timeout = self
+                                        .wlp_timer
+                                        .set_timeout(min_ld, reader.get_guid().entity_id);
+                                    self.wlp_timeouts
+                                        .insert(reader.get_guid().entity_id, timeout);
                                 } else {
                                     error!("not found Reader which attempt to set WriterLivelinessTimer\n\tReader: {}", reader_eid);
                                 }
@@ -726,22 +737,23 @@ impl EventLoop {
         );
         self.writers.insert(writer.entity_id(), writer);
     }
-    fn register_reader(&mut self, reader_ing: ReaderIngredients) {
-        let reader = Reader::new(reader_ing, self.udp_sender.clone());
-        if reader.entity_id() != EntityId::SPDP_BUILTIN_PARTICIPANT_DETECTOR
-            && reader.entity_id() != EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR
-            && reader.entity_id() != EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR
-            && reader.entity_id() != EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER
+    fn register_reader(&mut self, reader_ing: Box<dyn ReaderIngredientsType>) {
+        let reader = reader_ing.gen_new_reader(self.udp_sender.clone());
+        let reader_entity_id = reader.get_guid().entity_id;
+        if reader_entity_id != EntityId::SPDP_BUILTIN_PARTICIPANT_DETECTOR
+            && reader_entity_id != EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR
+            && reader_entity_id != EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR
+            && reader_entity_id != EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER
         {
             self.notify_new_reader_sender
-                .send((reader.entity_id(), reader.sedp_data()))
+                .send((reader_entity_id, reader.sedp_data()))
                 .expect("failed to send data via channle 'notify_new_reader_sender'");
         }
         trace!(
             "new Reader added to writers\n\tWriter: {}",
-            reader.entity_id(),
+            reader_entity_id,
         );
-        self.readers.insert(reader.entity_id(), reader);
+        self.readers.insert(reader_entity_id, reader);
     }
 
     fn receiv_packet(udp_sock: &UdpSocket) -> Vec<UdpMessage> {
