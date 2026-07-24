@@ -1,3 +1,4 @@
+use crate::dds::key::KeyHash;
 use crate::dds::qos::{
     policy::{LivelinessQosKind, Reliability},
     DataReaderQosBuilder,
@@ -83,6 +84,7 @@ impl EventLoop {
         discovery_db: DiscoveryDB,
         discdb_update_receiver: mio_channel::Receiver<DiscoveryDBUpdateNotifier>,
         spdp_data: SerializedPayload,
+        spdp_data_kh: Option<KeyHash>,
         builtin_endpoints_ingredients: BuiltinEndpointsIngredients,
     ) -> Self {
         let poll = Poll::new().unwrap();
@@ -202,6 +204,7 @@ impl EventLoop {
             discovery_db.clone(),
             wlp_timer_sender,
             spdp_data,
+            spdp_data_kh,
         );
         let mut ev_loop = EventLoop {
             domain_id,

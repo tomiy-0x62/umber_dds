@@ -1,4 +1,5 @@
 use crate::dds::{
+    key::KeyHash,
     qos::{
         policy::*, DataReaderQos, DataReaderQosBuilder, DataWriterQos, DataWriterQosBuilder,
         PublisherQos, SubscriberQos, TopicQos, TopicQosBuilder,
@@ -245,6 +246,7 @@ pub struct Discovery {
     publisher: Publisher,
     subscriber: Subscriber,
     self_spdp_data: SerializedPayload,
+    self_spdp_data_kh: Option<KeyHash>,
     spdp_builtin_participant_writer: DataWriter<SPDPdiscoveredParticipantData>,
     // Since the processing of incoming SPDP message is fully handled within the MessageReceiver.
     // The SPDPbuiltinParticipantReader is no longer necessary.
@@ -271,6 +273,7 @@ impl Discovery {
         builtin_endpoints: BuiltinEndpoints,
         discovery_db: DiscoveryDB,
         self_spdp_data: SerializedPayload,
+        self_spdp_data_kh: Option<KeyHash>,
         discdb_update_sender: mio_channel::Sender<DiscoveryDBUpdateNotifier>,
         notify_new_writer_receiver: mio_channel::Receiver<(EntityId, DiscoveredWriterData)>,
         notify_new_reader_receiver: mio_channel::Receiver<(EntityId, DiscoveredReaderData)>,
@@ -333,6 +336,7 @@ impl Discovery {
             publisher: builtin_endpoints.publisher,
             subscriber: builtin_endpoints.subscriber,
             self_spdp_data,
+            self_spdp_data_kh,
             spdp_builtin_participant_writer: builtin_endpoints.spdp_builtin_participant_writer,
             // spdp_builtin_participant_reader: builtin_endpoints.spdp_builtin_participant_reader,
             sedp_builtin_pub_writer: builtin_endpoints.sedp_builtin_pub_writer,
@@ -363,7 +367,11 @@ impl Discovery {
                         SPDP_SEND_TIMER => {
                             trace!("fired SPDP_SEND_TIMER");
                             self.spdp_builtin_participant_writer
-                                .write_serialized_builtin_data(self.self_spdp_data.clone(), false);
+                                .write_serialized_builtin_data(
+                                    self.self_spdp_data.clone(),
+                                    self.self_spdp_data_kh,
+                                    false,
+                                );
                             self.spdp_send_timer
                                 .set_timeout(self.dp.get_config().participant_message_period, ());
                         }

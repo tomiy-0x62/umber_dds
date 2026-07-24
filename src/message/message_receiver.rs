@@ -1,3 +1,4 @@
+use crate::dds::key::KeyHash;
 use crate::dds::qos::{
     policy::{Durability, History, HistoryQosKind, LivelinessQosKind, Reliability},
     DataReaderQosBuilder, DataWriterQosBuilder,
@@ -17,7 +18,7 @@ use crate::message::{
 use crate::net_util::*;
 use crate::rtps::cache::{HistoryCache, HistoryCacheType};
 use crate::rtps::{
-    cache::{CacheChange, ChangeKind},
+    cache::{CacheChangeIng, ChangeKind},
     reader::{ReaderTimer, RtpsReader},
     writer::{Writer, WriterTimer},
 };
@@ -66,6 +67,7 @@ pub struct MessageReceiver {
     have_timestamp: bool,
     timestamp: Timestamp,
     spdp_data: SerializedPayload,
+    spdp_data_kh: Option<KeyHash>,
     disc_db: DiscoveryDB,
 }
 
@@ -76,6 +78,7 @@ impl MessageReceiver {
         disc_db: DiscoveryDB,
         wlp_timer_sender: mio_channel::Sender<EntityId>,
         spdp_data: SerializedPayload,
+        spdp_data_kh: Option<KeyHash>,
     ) -> MessageReceiver {
         Self {
             own_guid_prefix: participant_guidprefix,
@@ -90,6 +93,7 @@ impl MessageReceiver {
             have_timestamp: false,
             timestamp: Timestamp::TIME_INVALID,
             spdp_data,
+            spdp_data_kh,
             disc_db,
         }
     }
@@ -393,7 +397,7 @@ impl MessageReceiver {
         let _reader_guid = GUID::new(self.dest_guid_prefix, data.reader_id);
 
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
-        let change = CacheChange::new(
+        let change = CacheChangeIng::new(
             ChangeKind::Alive,
             writer_guid,
             data.writer_sn,
@@ -665,7 +669,7 @@ impl MessageReceiver {
     fn handle_spdp_data(
         &mut self,
         data: Data,
-        _change: CacheChange,
+        _change: CacheChangeIng,
         writers: &mut BTreeMap<EntityId, Writer>,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
@@ -735,7 +739,11 @@ impl MessageReceiver {
             // spdp from unknown Participant
             match writers.get_mut(&EntityId::SPDP_BUILTIN_PARTICIPANT_ANNOUNCER) {
                 Some(w) => {
-                    w.send_builtin_data_for_loc(self.spdp_data.clone(), locators);
+                    w.send_builtin_data_for_loc(
+                        self.spdp_data.clone(),
+                        self.spdp_data_kh,
+                        locators,
+                    );
                 }
                 None => {
                     error!("not found spdp_builtin_participant_writer");
@@ -765,7 +773,7 @@ impl MessageReceiver {
     fn handle_sedp_w_data<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
         &mut self,
         data: Data,
-        change: CacheChange,
+        change: CacheChangeIng,
         ts: Timestamp,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
@@ -883,7 +891,7 @@ impl MessageReceiver {
     fn handle_sedp_r_data<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
         &self,
         data: Data,
-        change: CacheChange,
+        change: CacheChangeIng,
         writers: &mut BTreeMap<EntityId, Writer>,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
@@ -994,7 +1002,7 @@ impl MessageReceiver {
     >(
         &mut self,
         data: Data,
-        change: CacheChange,
+        change: CacheChangeIng,
         ts: Timestamp,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {

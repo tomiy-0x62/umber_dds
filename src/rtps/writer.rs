@@ -1,4 +1,5 @@
 use crate::dds::{
+    key::KeyHash,
     qos::{
         policy::{Durability, HistoryQosKind, ReliabilityQosKind},
         DataReaderQosPolicies, DataWriterQosPolicies,
@@ -416,9 +417,15 @@ impl Writer {
     pub fn send_builtin_data_for_loc(
         &self,
         builtin_data: SerializedPayload,
+        builtin_data_kh: Option<KeyHash>,
+
         locator: Vec<Locator>,
     ) {
         let time_stamp = Timestamp::now().expect("failed to get Timestamp::now()");
+        let ih = self
+            .writer_cache
+            .write()
+            .key_hash2instance_handle(builtin_data_kh.unwrap_or(KeyHash::ZERO));
         let a_change = CacheChange::new(
             ChangeKind::Alive,
             self.guid,
@@ -426,6 +433,7 @@ impl Writer {
             time_stamp,
             Some(builtin_data),
             None,
+            ih,
         );
         let mut message_builder = MessageBuilder::new();
         message_builder.info_ts(Endianness::LittleEndian, Some(time_stamp));

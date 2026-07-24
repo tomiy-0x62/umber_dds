@@ -6,7 +6,7 @@ use crate::dds::{
 };
 use crate::message::submessage::element::RepresentationIdentifier;
 use crate::rtps::{
-    cache::{HistoryCache, InstanceHandle},
+    cache::{CacheChange, HistoryCache, InstanceHandle},
     reader::DataReaderStatusChanged,
 };
 use crate::structure::GUID;
@@ -79,17 +79,43 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
             self.topic.name(),
             self.topic.type_desc()
         );
-        self.get_data()
-    }
-
-    fn get_data(&self) -> Vec<DataSample<R>> {
         let mut hc = self.rhc.write();
         let (keys, changes) = hc.get_ready_changes();
+        let samples = self.deserialize_changes(changes);
+        for key in keys.iter() {
+            hc.remove_change(key, true);
+        }
+        samples
+    }
+
+    pub fn take_instance(&self, instance_handle: InstanceHandle) -> Vec<DataSample<R>> {
+        info!(
+            "DataReader::take_instance({}) from Topic ({}, {})",
+            instance_handle,
+            self.topic.name(),
+            self.topic.type_desc()
+        );
+        let mut hc = self.rhc.write();
+        let (keys, changes) = hc.get_ready_instance_changes(instance_handle);
+        let samples = self.deserialize_changes(changes);
+        for key in keys.iter() {
+            hc.remove_change(key, true);
+        }
+        samples
+    }
+
+    fn deserialize_changes(&self, changes: Vec<&CacheChange>) -> Vec<DataSample<R>> {
         let mut v: Vec<DataSample<R>> = Vec::new();
-        for (d, ts) in changes
+        for (d, ts, ih) in changes
             .iter()
             .filter(|change| change.data_value().is_some())
-            .map(|change| (change.data_value().unwrap(), change.timestamp))
+            .map(|change| {
+                (
+                    change.data_value().unwrap(),
+                    change.timestamp,
+                    change.instance_handle,
+                )
+            })
         {
             let received_bytes = d.to_bytes();
             let encapsulation_kind =
@@ -107,15 +133,12 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
                 }
             };
             match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
-                Ok(data) => v.push(DataSample::new(data, SampleInfo::new(ts))),
+                Ok(data) => v.push(DataSample::new(data, SampleInfo::new(ts, ih))),
                 Err(e) => error!(
                     "DataReader failed to deserialize: '{}'\n\tDataReader: {}\n\tTopic: {}",
                     e, self._reader_guid, self.topic
                 ),
             }
-        }
-        for key in keys.iter() {
-            hc.remove_change(key, true);
         }
         v
     }

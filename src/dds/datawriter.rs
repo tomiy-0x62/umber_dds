@@ -1,5 +1,5 @@
 use crate::dds::{
-    key::DdsData,
+    key::{DdsData, KeyHash},
     publisher::Publisher,
     qos::{
         policy::{LivelinessQosKind, ReliabilityQosKind},
@@ -91,33 +91,37 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
     /// publish data for matching DataReader
     pub fn write(&mut self, data: &W) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
+        let key_hash = data.gen_key();
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::CDR_LE);
-        self.writer_data_to_hc(ts, serialized_payload, true);
+        self.writer_data_to_hc(ts, serialized_payload, key_hash, true);
     }
 
     /// + inc_seq_num: whether the seq_num needs to be incremented.
     pub(crate) fn write_builtin_data(&mut self, data: &W, inc_seq_num: bool) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
+        let key_hash = data.gen_key();
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::PL_CDR_LE);
-        self.writer_data_to_hc(ts, serialized_payload, inc_seq_num);
+        self.writer_data_to_hc(ts, serialized_payload, key_hash, inc_seq_num);
     }
 
     /// + inc_seq_num: whether the seq_num needs to be incremented.
     pub(crate) fn write_serialized_builtin_data(
         &mut self,
         data: SerializedPayload,
+        key_hash: Option<KeyHash>,
         inc_seq_num: bool,
     ) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
-        self.writer_data_to_hc(ts, data, inc_seq_num);
+        self.writer_data_to_hc(ts, data, key_hash, inc_seq_num);
     }
 
     fn writer_data_to_hc(
         &mut self,
         ts: Timestamp,
         serialized_payload: SerializedPayload,
+        key_hash: Option<KeyHash>,
         inc_seq_num: bool,
     ) {
         if inc_seq_num {
@@ -125,6 +129,11 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         } else if self.last_change_sequence_number == SequenceNumber(0) {
             self.last_change_sequence_number = SequenceNumber(1);
         }
+        let instance_handle = if let Some(kh) = key_hash {
+            self.whc.write().key_hash2instance_handle(kh)
+        } else {
+            InstanceHandle::HANDLE_NIL
+        };
         let a_change = CacheChange::new(
             ChangeKind::Alive,
             self.writer_guid,
@@ -132,6 +141,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             ts,
             Some(serialized_payload),
             None,
+            instance_handle,
         );
         loop {
             let write_res = self.whc.write().add_change(

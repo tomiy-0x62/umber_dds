@@ -22,10 +22,10 @@ pub struct CacheChange {
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
     inline_qos: Option<ParameterList>,
-    // instance_handle: InstanceHandle, // In DDS, the value of the fields
-    // labeled as ‘key’ within the data
-    // uniquely identify each data-
-    // object.
+    pub instance_handle: InstanceHandle, // In DDS, the value of the fields
+                                         // labeled as ‘key’ within the data
+                                         // uniquely identify each data-
+                                         // object.
 }
 
 impl CacheChange {
@@ -36,7 +36,7 @@ impl CacheChange {
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
         inline_qos: Option<ParameterList>,
-        // instance_handle: InstanceHandle,
+        instance_handle: InstanceHandle,
     ) -> Self {
         Self {
             kind,
@@ -45,12 +45,56 @@ impl CacheChange {
             timestamp,
             data_value,
             inline_qos,
-            // instance_handle,
+            instance_handle,
         }
     }
 
     pub fn data_value(&self) -> Option<&SerializedPayload> {
         self.data_value.as_ref()
+    }
+}
+
+#[derive(PartialEq, Eq, Clone)]
+pub struct CacheChangeIng {
+    kind: ChangeKind,
+    pub writer_guid: GUID,
+    pub sequence_number: SequenceNumber,
+    pub timestamp: Timestamp,
+    data_value: Option<SerializedPayload>,
+    inline_qos: Option<ParameterList>,
+}
+
+impl CacheChangeIng {
+    pub fn new(
+        kind: ChangeKind,
+        writer_guid: GUID,
+        sequence_number: SequenceNumber,
+        timestamp: Timestamp,
+        data_value: Option<SerializedPayload>,
+        inline_qos: Option<ParameterList>,
+    ) -> Self {
+        Self {
+            kind,
+            writer_guid,
+            sequence_number,
+            timestamp,
+            data_value,
+            inline_qos,
+        }
+    }
+    pub fn data_value(&self) -> Option<&SerializedPayload> {
+        self.data_value.as_ref()
+    }
+    pub fn gen_cache_change(self, instance_handle: InstanceHandle) -> CacheChange {
+        CacheChange::new(
+            self.kind,
+            self.writer_guid,
+            self.sequence_number,
+            self.timestamp,
+            self.data_value,
+            self.inline_qos,
+            instance_handle,
+        )
     }
 }
 
@@ -122,8 +166,30 @@ pub enum ChangeKind {
     _NotAliveUnregistered,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy)]
-pub struct InstanceHandle {/* TODO */}
+#[derive(PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+pub struct InstanceHandle {
+    instance_id: u32,
+}
+impl InstanceHandle {
+    // DDS v1.4 spec, 2.2.2.5.3.16 read_next_instance
+    // > The special value HANDLE_NIL is guaranteed to be ‘less than’ any valid instance_handle.
+    pub const HANDLE_NIL: Self = Self {
+        instance_id: u32::MIN,
+    };
+    pub const HANDLE_ENTITY: Self = Self { instance_id: 1 };
+    /// return valid InstanceHandle
+    ///
+    /// id must more than u32::MIN
+    pub(crate) fn new(id: u32) -> Self {
+        assert!(id > Self::HANDLE_NIL.instance_id);
+        Self { instance_id: id }
+    }
+}
+impl core::fmt::Display for InstanceHandle {
+    fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
+        write!(f, "InstanceHandle {{ {} }}", self.instance_id)
+    }
+}
 
 #[derive(PartialEq, Eq, Clone, Copy, Debug)]
 pub struct HCKey {
@@ -422,6 +488,24 @@ impl HistoryCache {
                 .iter()
                 .filter(|k| self.ready_key.contains(k))
                 .map(|k| (*k, self.changes.get(k).unwrap_or_else(|| panic!("Access to HistoryCache changes occurs for keys included in kind2key but not in changes: {}", k))))
+                .collect();
+            res.sort_by_key(|(key, _cache)| *key);
+            res.into_iter().unzip()
+        } else {
+            (Vec::new(), Vec::new())
+        }
+    }
+
+    pub fn get_ready_instance_changes(
+        &self,
+        instance_handle: InstanceHandle,
+    ) -> (Vec<HCKey>, Vec<&CacheChange>) {
+        if let Some(keys) = self.kind2key.get(&ChangeKind::Alive) {
+            let mut res: Vec<(HCKey, &CacheChange)> = keys
+                .iter()
+                .filter(|k| self.ready_key.contains(k))
+                .map(|k| (*k, self.changes.get(k).unwrap_or_else(|| panic!("Access to HistoryCache changes occurs for keys included in kind2key but not in changes: {}", k))))
+                .filter(|(_k, c)| c.instance_handle == instance_handle)
                 .collect();
             res.sort_by_key(|(key, _cache)| *key);
             res.into_iter().unzip()

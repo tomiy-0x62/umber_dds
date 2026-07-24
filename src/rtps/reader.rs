@@ -16,7 +16,7 @@ use crate::message::submessage::{
     submessage_flag::HeartbeatFlag,
 };
 use crate::network::udp_sender::UdpSender;
-use crate::rtps::cache::{CacheChange, HCKey, HistoryCache, HistoryCacheType};
+use crate::rtps::cache::{CacheChangeIng, HCKey, HistoryCache, HistoryCacheType};
 use crate::structure::{
     Duration, EntityId, GuidPrefix, RTPSEntity, ReaderProxy, TopicKind, WriterProxy, GUID,
 };
@@ -73,7 +73,7 @@ pub trait RtpsReader: Any + Send {
     fn add_change(
         &mut self,
         source_guid_prefix: GuidPrefix,
-        change: CacheChange,
+        change: CacheChangeIng,
     ) -> Option<Vec<ReaderTimer>>;
     fn check_liveliness(&mut self, disc_db: &mut DiscoveryDB);
     fn handle_heartbeat(
@@ -269,9 +269,9 @@ where
     fn add_change(
         &mut self,
         source_guid_prefix: GuidPrefix,
-        change: CacheChange,
+        change_ing: CacheChangeIng,
     ) -> Option<Vec<ReaderTimer>> {
-        let writer_guid = GUID::new(source_guid_prefix, change.writer_guid.entity_id);
+        let writer_guid = GUID::new(source_guid_prefix, change_ing.writer_guid.entity_id);
         if let Some(wp) = self.unmatched_writers.remove(&writer_guid) {
             debug!(
                 "rematched with unmatched writer\n\tReader: {}, Writer: {}",
@@ -292,7 +292,7 @@ where
         }
         debug!(
             "Reader::add_change from Writer, seq_num: {}\n\tReader: {}\n\tWriter: {}",
-            change.sequence_number.0, self.guid, writer_guid
+            change_ing.sequence_number.0, self.guid, writer_guid
         );
         let lifespan = match self.matched_writers.get(&writer_guid) {
             Some(wp) => wp.qos.lifespan(),
@@ -308,9 +308,9 @@ where
                 self.entity_id(),
                 HCKey {
                     guid: writer_guid,
-                    seq_num: change.sequence_number,
+                    seq_num: change_ing.sequence_number,
                 },
-                change.timestamp,
+                change_ing.timestamp,
                 lifespan.0.into(),
             ))
         }
@@ -322,7 +322,7 @@ where
             ));
         }
         // TODO: deserialize received data and calclate KeyHash
-        let _deserialized = match change.data_value() {
+        let key_hash = match change_ing.data_value() {
             Some(data) => {
                 let received_bytes = data.to_bytes();
                 let encapsulation_kind =
@@ -350,6 +350,8 @@ where
             }
             None => KeyHash::ZERO,
         };
+        let ih = self.reader_cache.write().key_hash2instance_handle(key_hash);
+        let change = change_ing.gen_cache_change(ih);
         if self.is_reliable() {
             // Reliable Reader Behavior
             if let Err(e) = self.reader_cache.write().add_change(

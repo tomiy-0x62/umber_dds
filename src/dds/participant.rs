@@ -18,6 +18,7 @@ use crate::structure::{RTPSEntity, VendorId};
 use crate::{
     dds::{
         event_loop::EventLoop,
+        key::KeyHash,
         publisher::Publisher,
         qos::{
             PublisherQos, PublisherQosBuilder, PublisherQosPolicies, SubscriberQos,
@@ -128,6 +129,7 @@ impl DomainParticipant {
         let (be, be_ing) = create_builtin_endpoints(&dp);
         let mut node = MCSNode::new();
         let serialized_spdp_data = dp.inner.lock(&mut node).serialized_spdp_data.clone();
+        let spdp_data_kh = dp.inner.lock(&mut node).spdp_data_kh;
 
         let serialized_spdp_data_clone = serialized_spdp_data.clone();
         let dp_clone = dp.clone();
@@ -149,6 +151,7 @@ impl DomainParticipant {
                     discovery_db_clone,
                     discdb_update_receiver,
                     serialized_spdp_data_clone,
+                    spdp_data_kh,
                     be_ing,
                 );
                 ev_loop.event_loop();
@@ -156,16 +159,18 @@ impl DomainParticipant {
             .expect("failed to spawn EventLoop thread");
         let mut node = MCSNode::new();
         dp.inner.lock(&mut node).ev_loop_handler = Some(ev_loop_handler);
+        let spdp_data_kh = dp.inner.lock(&mut node).spdp_data_kh;
 
         let dp_clone = dp.clone();
         let discovery_handler = Builder::new()
             .name(String::from("discovery"))
-            .spawn(|| {
+            .spawn(move || {
                 let mut discovery = Discovery::new(
                     dp_clone,
                     be,
                     discovery_db,
                     serialized_spdp_data,
+                    spdp_data_kh,
                     discdb_update_sender,
                     notify_new_writer_receiver,
                     notify_new_reader_receiver,
@@ -273,6 +278,7 @@ pub(crate) struct DomainParticipantInner {
     network_interfaces: Vec<Ipv4Addr>,
     _spdp_data: SPDPdiscoveredParticipantData,
     serialized_spdp_data: SerializedPayload,
+    spdp_data_kh: Option<KeyHash>,
 }
 
 impl DomainParticipantInner {
@@ -372,6 +378,7 @@ impl DomainParticipantInner {
             Some(0),
             participant_config.lease_duration.into(),
         );
+        let spdp_data_kh = spdp_data.gen_key();
         let serialized_spdp_data =
             SerializedPayload::new_from_cdr_data(&spdp_data, RepresentationIdentifier::PL_CDR_LE);
 
@@ -397,6 +404,7 @@ impl DomainParticipantInner {
             participant_config,
             network_interfaces,
             _spdp_data: spdp_data,
+            spdp_data_kh,
             serialized_spdp_data,
         };
         let ev_loop_ing = EvLoopIngredients {
