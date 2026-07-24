@@ -23,7 +23,6 @@ use crate::rtps::{
     writer::{Writer, WriterTimer},
 };
 use crate::structure::{EntityId, GuidPrefix, VendorId, GUID};
-use crate::DdsData;
 use alloc::collections::BTreeMap;
 use alloc::fmt;
 use alloc::sync::Arc;
@@ -415,17 +414,17 @@ impl MessageReceiver {
             || data.reader_id == EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR
         {
             // if msg is for SEDP(w)
-            self.handle_sedp_w_data::<SDPBuiltinData>(data, change, ts, readers)?;
+            self.handle_sedp_w_data(data, change, ts, readers)?;
         } else if data.writer_id == EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER
             || data.reader_id == EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR
         {
             // if msg is for SEDP(r)
-            self.handle_sedp_r_data::<SDPBuiltinData>(data, change, writers, readers)?;
+            self.handle_sedp_r_data(data, change, writers, readers)?;
         } else if data.writer_id == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER
             || data.reader_id == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER
         {
             // if ParticipantMessage
-            self.handle_participant_message::<ParticipantMessageData>(data, change, ts, readers)?;
+            self.handle_participant_message(data, change, ts, readers)?;
         } else if data.reader_id == EntityId::UNKNOW {
             for reader in readers.values_mut() {
                 if reader.is_contain_writer(writer_guid) {
@@ -770,7 +769,7 @@ impl MessageReceiver {
         */
         Ok(())
     }
-    fn handle_sedp_w_data<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
+    fn handle_sedp_w_data(
         &mut self,
         data: Data,
         change: CacheChangeIng,
@@ -888,7 +887,7 @@ impl MessageReceiver {
         };
         Ok(())
     }
-    fn handle_sedp_r_data<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static>(
+    fn handle_sedp_r_data(
         &self,
         data: Data,
         change: CacheChangeIng,
@@ -997,9 +996,7 @@ impl MessageReceiver {
         };
         Ok(())
     }
-    fn handle_participant_message<
-        R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static,
-    >(
+    fn handle_participant_message(
         &mut self,
         data: Data,
         change: CacheChangeIng,

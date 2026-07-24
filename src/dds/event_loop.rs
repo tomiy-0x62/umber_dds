@@ -803,10 +803,10 @@ impl EventLoop {
     }
 
     fn remove_discoverd_participant(&mut self, participant_guidp: GuidPrefix) {
-        for (_eid, r) in self.readers.iter_mut() {
+        for r in self.readers.values_mut() {
             r.delete_writer_proxy(participant_guidp);
         }
-        for (_eid, w) in self.writers.iter_mut() {
+        for w in self.writers.values_mut() {
             w.delete_reader_proxy(participant_guidp);
         }
     }

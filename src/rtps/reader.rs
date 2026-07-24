@@ -59,6 +59,7 @@ pub trait RtpsReader: Any + Send {
         data_max_size_serialized: i32,
         qos: DataWriterQosPolicies,
     );
+    #[allow(clippy::too_many_arguments)]
     fn matched_writer_add_with_default_locator(
         &mut self,
         remote_writer_guid: GUID,

@@ -18,7 +18,7 @@ pub struct ProtocolId {
 
 impl ProtocolId {
     pub const PROTOCOLVID: Self = Self {
-        protocol_id: [b'R', b'T', b'P', b'S'],
+        protocol_id: *b"RTPS",
     };
 }
 

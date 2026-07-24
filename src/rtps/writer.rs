@@ -770,7 +770,7 @@ impl Writer {
                 key.seq_num, self.guid.entity_id
             );
             self.writer_cache.write().remove_change(&key, false);
-            for (_guid, rp) in self.matched_readers.iter_mut() {
+            for rp in self.matched_readers.values_mut() {
                 rp.remove_cache_state(&key.seq_num);
             }
         }

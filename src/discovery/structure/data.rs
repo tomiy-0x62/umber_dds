@@ -288,14 +288,8 @@ impl SDPBuiltinData {
     }
 
     pub fn topic_info(&self) -> Option<(&String, &String)> {
-        let name = match &self.topic_name {
-            Some(n) => n,
-            None => return None,
-        };
-        let data_type = match &self.type_name {
-            Some(d) => d,
-            None => return None,
-        };
+        let name = self.topic_name.as_ref()?;
+        let data_type = self.type_name.as_ref()?;
         Some((name, data_type))
     }
 
