@@ -323,33 +323,35 @@ where
             ));
         }
         // TODO: deserialize received data and calclate KeyHash
-        let key_hash = match change_ing.data_value() {
-            Some(data) => {
-                let received_bytes = data.to_bytes();
-                let encapsulation_kind =
-                    RepresentationIdentifier::new([received_bytes[0], received_bytes[1]]);
-                let _encapsulation_option = [received_bytes[2], received_bytes[3]];
-                let endianness = match encapsulation_kind {
-                    RepresentationIdentifier::CDR_LE | RepresentationIdentifier::PL_CDR_LE => {
-                        Endianness::LittleEndian
+        let key_hash = match change_ing.key_hash {
+            Some(kh) => kh,
+            None => match change_ing.data_value() {
+                Some(data) => {
+                    let received_bytes = data.to_bytes();
+                    let encapsulation_kind =
+                        RepresentationIdentifier::new([received_bytes[0], received_bytes[1]]);
+                    let _encapsulation_option = [received_bytes[2], received_bytes[3]];
+                    let endianness =
+                        match encapsulation_kind {
+                            RepresentationIdentifier::CDR_LE
+                            | RepresentationIdentifier::PL_CDR_LE => Endianness::LittleEndian,
+                            RepresentationIdentifier::CDR_BE
+                            | RepresentationIdentifier::PL_CDR_BE => Endianness::BigEndian,
+                            rep => {
+                                let bytes = rep.bytes();
+                                panic!(
+                                    "unexpected encapsulation_kind: [0x{:02x}, 0x{:02x}]",
+                                    bytes[0], bytes[1]
+                                );
+                            }
+                        };
+                    match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
+                        Ok(d) => d.gen_key().unwrap_or(KeyHash::ZERO),
+                        Err(_e) => KeyHash::ZERO,
                     }
-                    RepresentationIdentifier::CDR_BE | RepresentationIdentifier::PL_CDR_BE => {
-                        Endianness::BigEndian
-                    }
-                    rep => {
-                        let bytes = rep.bytes();
-                        panic!(
-                            "unexpected encapsulation_kind: [0x{:02x}, 0x{:02x}]",
-                            bytes[0], bytes[1]
-                        );
-                    }
-                };
-                match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
-                    Ok(d) => d.gen_key().unwrap_or(KeyHash::ZERO),
-                    Err(_e) => KeyHash::ZERO,
                 }
-            }
-            None => KeyHash::ZERO,
+                None => KeyHash::ZERO,
+            },
         };
         let ih = self.reader_cache.write().key_hash2instance_handle(key_hash);
         let change = change_ing.gen_cache_change(ih);

@@ -22,7 +22,7 @@ use crate::rtps::{
     reader::{ReaderTimer, RtpsReader},
     writer::{Writer, WriterTimer},
 };
-use crate::structure::{EntityId, GuidPrefix, VendorId, GUID};
+use crate::structure::{EntityId, GuidPrefix, ParameterId, VendorId, GUID};
 use alloc::collections::BTreeMap;
 use alloc::fmt;
 use alloc::sync::Arc;
@@ -371,6 +371,8 @@ impl MessageReceiver {
             return Err(MessageError::Warn("Invalid Data Submessage".to_string()));
         }
 
+        let mut key_hash: Option<KeyHash> = None;
+
         // TODO: check inlineQos is valid
         if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
             // the serializedPayload element is interpreted as the value of the dtat-object
@@ -381,9 +383,33 @@ impl MessageReceiver {
         if flag.contains(DataFlag::InlineQos) {
             // the inlineQos element contains QoS values that override those of the RTPS Writer and should
             // be used to process the update. For a complete list of possible in-line QoS parameters, see Table 8.80.
-            return Err(MessageError::Warn(
-                "received DATA with inlineQos, Umber DDS dosen't support inlineQos yet".to_string(),
-            ));
+            if let Some(inline_qos) = &data.inline_qos {
+                for parameter in &inline_qos.parameters {
+                    match parameter.parameter_id {
+                        ParameterId::PID_KEY_HASH => {
+                            key_hash = KeyHash::read_from_buffer_with_ctx(
+                                Endianness::LittleEndian,
+                                &parameter.value,
+                            )
+                            .ok();
+                        }
+                        ParameterId::PID_SENTINEL => {
+                            break;
+                        }
+                        _ => {
+                            warn!(
+                                "received DATA with inlineQos. It include unsupported parameter: pid: 0x{:04x}, parameter: {:?}",
+                                parameter.parameter_id.value, parameter.value
+                            );
+                        }
+                    }
+                }
+            } else {
+                return Err(MessageError::Error(
+                    "received DATA with InlineQosFlag is set but not contains inlineQos"
+                        .to_string(),
+                ));
+            }
         }
         if flag.contains(DataFlag::NonStandardPayload) {
             // the serializedPayload element is not formatted according to Section 10.
@@ -403,6 +429,7 @@ impl MessageReceiver {
             ts,
             data.serialized_payload.clone(),
             data.inline_qos.clone(),
+            key_hash,
         );
 
         if data.writer_id == EntityId::SPDP_BUILTIN_PARTICIPANT_ANNOUNCER

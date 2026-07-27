@@ -1,6 +1,6 @@
-use speedy::{Endianness, Writable};
+use speedy::{Endianness, Readable, Writable};
 
-#[derive(Debug, PartialOrd, PartialEq, Ord, Eq, Clone, Copy)]
+#[derive(Debug, PartialOrd, PartialEq, Ord, Eq, Clone, Copy, Readable, Writable)]
 pub struct KeyHash {
     _hash: [u8; 16],
 }

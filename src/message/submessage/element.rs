@@ -180,16 +180,16 @@ pub struct NumberSet<T> {
 
 #[derive(PartialEq, Eq, Clone)]
 pub struct Parameter {
-    parameter_id: ParameterId,
+    pub parameter_id: ParameterId,
     // length: i16,
     // RTPS 2.3 spec 9.4.2.11 ParameterList show Parameter contains length,
     // but it need only deseriarize time
-    value: Vec<u8>,
+    pub value: Vec<u8>,
 }
 
 #[derive(Default, PartialEq, Eq, Clone)]
 pub struct ParameterList {
-    parameters: Vec<Parameter>,
+    pub parameters: Vec<Parameter>,
 }
 
 impl<'a, C: Context> Readable<'a, C> for ParameterList {

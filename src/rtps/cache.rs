@@ -62,6 +62,7 @@ pub struct CacheChangeIng {
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
     inline_qos: Option<ParameterList>,
+    pub key_hash: Option<KeyHash>,
 }
 
 impl CacheChangeIng {
@@ -72,6 +73,7 @@ impl CacheChangeIng {
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
         inline_qos: Option<ParameterList>,
+        key_hash: Option<KeyHash>,
     ) -> Self {
         Self {
             kind,
@@ -80,6 +82,7 @@ impl CacheChangeIng {
             timestamp,
             data_value,
             inline_qos,
+            key_hash,
         }
     }
     pub fn data_value(&self) -> Option<&SerializedPayload> {
