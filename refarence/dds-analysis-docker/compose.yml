@@ -13,9 +13,9 @@ services:
         command: /bin/bash
         environment:
           DISPLAY: $DISPLAY
-        user: foo
+        user: ubuntu
         volumes:
-            - ../../target:/home/umber_dds/target
+            - ../../target:/home/ubuntu/umber_dds/target
             -  /tmp/.X11-unix/:/tmp/.X11-unix
     publisher2:
         depends_on:
@@ -29,9 +29,9 @@ services:
         command: /bin/bash
         environment:
           DISPLAY: $DISPLAY
-        user: foo
+        user: ubuntu
         volumes:
-            - ../../target:/home/umber_dds/target
+            - ../../target:/home/ubuntu/umber_dds/target
             -  /tmp/.X11-unix/:/tmp/.X11-unix
     subscriber:
         build:
@@ -45,9 +45,10 @@ services:
                 ipv4_address: 192.168.208.3
         tty: true
         command: /bin/bash
+        user: ubuntu
         volumes:
-            - ../RustDDS:/home/RustDDS
-            - ../../target:/home/umber_dds/target
+            - ../RustDDS:/home/ubuntu/RustDDS
+            - ../../target:/home/ubuntu/umber_dds/target
             - ./subscriber/rust-subscriber:/home/rust-subscriber
     subscriber2:
         depends_on:
@@ -59,10 +60,11 @@ services:
                 ipv4_address: 192.168.208.5
         tty: true
         command: /bin/bash
+        user: ubuntu
         volumes:
             - ../RustDDS:/home/RustDDS
-            - ../../target:/home/umber_dds/target
-            - ./subscriber/rust-subscriber:/home/rust-subscriber
+            - ../../target:/home/ubuntu/umber_dds/target
+            - ./subscriber/rust-subscriber:/home/ubuntu/rust-subscriber
 
 
 networks:

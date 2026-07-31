@@ -16,7 +16,7 @@ RUN --mount=type=bind,src=./dds-analysis-docker/cyclone_shapesdemo,target=./cycl
     && cmake ../cyclone_shapesdemo && cmake --build .
 
 
-FROM ubuntu:jammy AS runner
+FROM ubuntu:noble AS runner
 
 RUN apt-get update && apt-get install -y \
     iproute2 tmux gdb lsof libtinyxml2-dev
@@ -24,12 +24,12 @@ RUN apt-get update && apt-get install -y \
 # copy fastdds from fastdds_img
 COPY --from=fast_builder /opt/Fast-DDS /opt/Fast-DDS
 # copy DDSHelloWorld from fastdds_img
-COPY --from=fast_builder /home/build /home/DDSHelloWorld
+COPY --from=fast_builder /home/build /home/ubuntu/DDSHelloWorld
 # copy cyclonedds from cyclonedds_img
 COPY --from=cyclone_builder /opt/cyclonedds /opt/cyclonedds
 # copy cyclonedds from cyclone_shapedemo
-COPY --from=cyclone_builder /home/cyclone_build /home/cyclone_shapesdemo
+COPY --from=cyclone_builder /home/cyclone_build /home/ubuntu/cyclone_shapesdemo
 
-WORKDIR /home
+WORKDIR /home/ubuntu
 
 RUN mkdir -p RustDDS umber_dds/target rust-subscriber

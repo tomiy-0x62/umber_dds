@@ -16,8 +16,8 @@ services:
           - seccomp=unconfined
         command: /bin/bash
         volumes:
-            - ./umber_dds:/home
-            - ../target:/home/umber_dds/target
+            - ./umber_dds:/home/ubuntu
+            - ../target:/home/ubuntu/umber_dds/target
     umber_dds2:
         depends_on:
             - umber_dds
@@ -33,8 +33,8 @@ services:
           - seccomp=unconfined
         command: /bin/bash
         volumes:
-            - ./umber_dds:/home
-            - ../target:/home/umber_dds/target
+            - ./umber_dds:/home/ubuntu
+            - ../target:/home/ubuntu/umber_dds/target
     otherdds:
         build:
             context: otherdds
@@ -52,7 +52,7 @@ services:
           - seccomp=unconfined
         command: /bin/bash
         volumes:
-            - ./otherdds/shapes_demo_rustdds:/home/shapes_demo_rustdds
+            - ./otherdds/shapes_demo_rustdds:/home/ubuntu/shapes_demo_rustdds
     otherdds_dev:
         build:
            context: ..
@@ -67,11 +67,8 @@ services:
         command: /bin/bash
         environment:
             DISPLAY: $DISPLAY
-        user: foo
         volumes:
-            - ./otherdds_dev/msgs:/home/foo/msgs
-            - ./otherdds_dev/workspace_FastDDSShapesDemo:/home/foo/workspace_FastDDSShapesDemo
-            - ./otherdds_dev/shapes_demo_safe_drive/:/home/foo/shapes_demo_safe_drive/
+            - ./otherdds_dev/workspace_FastDDSShapesDemo:/home/ubuntu/workspace_FastDDSShapesDemo
             - /tmp/.X11-unix:/tmp/.X11-unix
 
 networks:
