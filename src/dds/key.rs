@@ -2,15 +2,18 @@ use speedy::{Endianness, Readable, Writable};
 
 #[derive(Debug, PartialOrd, PartialEq, Ord, Eq, Clone, Copy, Readable, Writable)]
 pub struct KeyHash {
-    _hash: [u8; 16],
+    hash: [u8; 16],
 }
 
 impl KeyHash {
-    pub const ZERO: Self = Self { _hash: [0; 16] };
+    pub const ZERO: Self = Self { hash: [0; 16] };
     pub fn new(bytes: &[u8]) -> Self {
         let mut hash_in = [0u8; 16];
         hash_in.copy_from_slice(bytes);
-        Self { _hash: hash_in }
+        Self { hash: hash_in }
+    }
+    pub fn to_vec_u8(&self) -> Vec<u8> {
+        Vec::from(&self.hash)
     }
 }
 

@@ -5,6 +5,7 @@ use crate::message::submessage::element::{
 };
 use crate::structure::GUID;
 use alloc::collections::{BTreeMap, BTreeSet};
+use bimap::BiMap;
 use log::{debug, warn};
 use thiserror::Error;
 
@@ -21,7 +22,7 @@ pub struct CacheChange {
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
-    inline_qos: Option<ParameterList>,
+    pub inline_qos: Option<ParameterList>,
     pub instance_handle: InstanceHandle, // In DDS, the value of the fields
                                          // labeled as ‘key’ within the data
                                          // uniquely identify each data-
@@ -261,7 +262,7 @@ pub(crate) struct HistoryCache {
     min_seq_num: Option<SequenceNumber>,
     max_seq_num: Option<SequenceNumber>,
     next_ih: u32,
-    kh2ih: BTreeMap<KeyHash, InstanceHandle>,
+    keyhash_instancehandle: BiMap<KeyHash, InstanceHandle>,
 }
 
 // life cycle of CacheChange on WriterCache
@@ -288,16 +289,15 @@ impl HistoryCache {
             min_seq_num: None,
             max_seq_num: None,
             next_ih: 0x10,
-            kh2ih: BTreeMap::new(),
-            // ih2k: BTreeMap::new(),
+            keyhash_instancehandle: BiMap::new(),
         }
     }
     pub fn key_hash2instance_handle(&mut self, keyhash: KeyHash) -> InstanceHandle {
-        if let Some(ih) = self.kh2ih.get(&keyhash) {
+        if let Some(ih) = self.keyhash_instancehandle.get_by_left(&keyhash) {
             *ih
         } else {
             let ih = InstanceHandle::new(self.next_ih);
-            self.kh2ih.insert(keyhash, ih);
+            self.keyhash_instancehandle.insert(keyhash, ih);
             self.next_ih += 1;
             ih
         }
@@ -307,6 +307,11 @@ impl HistoryCache {
             guid,
             Timestamp::now().expect("failed to get Timestamp::now()"),
         );
+    }
+    pub fn ih2kh(&self, instance_handle: InstanceHandle) -> Option<KeyHash> {
+        self.keyhash_instancehandle
+            .get_by_right(&instance_handle)
+            .copied()
     }
     pub fn add_change(
         &mut self,

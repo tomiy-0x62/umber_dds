@@ -61,6 +61,7 @@ pub struct Writer {
     matched_readers: BTreeMap<GUID, ReaderProxy>,
     total_matched_readers: BTreeSet<GUID>,
     // This implementation spesific
+    is_keyed: bool,
     topic: Topic,
     qos: DataWriterQosPolicies,
     endianness: Endianness,
@@ -126,6 +127,7 @@ impl Writer {
                 _reader_locators: Vec::new(),
                 matched_readers: BTreeMap::new(),
                 total_matched_readers: BTreeSet::new(),
+                is_keyed: wi.is_keyed,
                 topic: wi.topic,
                 qos: wi.qos,
                 endianness: Endianness::LittleEndian,
@@ -362,11 +364,22 @@ impl Writer {
                     let mut message_builder = MessageBuilder::new();
                     let time_stamp = Timestamp::now();
                     message_builder.info_ts(Endianness::LittleEndian, time_stamp);
+                    let key_hash = if self.is_keyed {
+                        if let Some(kh) = self.writer_cache.read().ih2kh(aa_change.instance_handle)
+                        {
+                            Some(kh)
+                        } else {
+                            unreachable!();
+                        }
+                    } else {
+                        None
+                    };
                     message_builder.data(
                         Endianness::LittleEndian,
                         self.guid.entity_id,
                         reid,
                         aa_change,
+                        key_hash,
                     );
                     // TODO: piggybacking HB
                     let message = message_builder.build(self_guid_prefix);
@@ -437,11 +450,21 @@ impl Writer {
         );
         let mut message_builder = MessageBuilder::new();
         message_builder.info_ts(Endianness::LittleEndian, Some(time_stamp));
+        let key_hash = if self.is_keyed {
+            if let Some(kh) = self.writer_cache.read().ih2kh(a_change.instance_handle) {
+                Some(kh)
+            } else {
+                unreachable!();
+            }
+        } else {
+            None
+        };
         message_builder.data(
             Endianness::LittleEndian,
             self.guid.entity_id,
             EntityId::SPDP_BUILTIN_PARTICIPANT_DETECTOR,
             &a_change,
+            key_hash,
         );
         let message = message_builder.build(self.guid_prefix());
         let message_buf = message
@@ -643,11 +666,22 @@ impl Writer {
                     let mut message_builder = MessageBuilder::new();
                     let time_stamp = Timestamp::now();
                     message_builder.info_ts(Endianness::LittleEndian, time_stamp);
+                    let key_hash = if self.is_keyed {
+                        if let Some(kh) = self.writer_cache.read().ih2kh(aa_change.instance_handle)
+                        {
+                            Some(kh)
+                        } else {
+                            unreachable!();
+                        }
+                    } else {
+                        None
+                    };
                     message_builder.data(
                         Endianness::LittleEndian,
                         self.guid.entity_id,
                         reid,
                         aa_change,
+                        key_hash,
                     );
                     let message = message_builder.build(self_guid_prefix);
                     let message_buf = message
@@ -1128,6 +1162,7 @@ pub(crate) struct WriterIngredients {
     pub data_max_size_serialized: i32,
     pub(crate) whc: Arc<RwLock<HistoryCache>>,
     // This implementation spesific
+    pub is_keyed: bool,
     pub topic: Topic,
     pub qos: DataWriterQosPolicies,
     pub writer_command_receiver: mio_channel::Receiver<WriterCmd>,

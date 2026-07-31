@@ -187,9 +187,32 @@ pub struct Parameter {
     pub value: Vec<u8>,
 }
 
+impl Parameter {
+    pub fn new(id: ParameterId, value: Vec<u8>) -> Self {
+        Self {
+            parameter_id: id,
+            value,
+        }
+    }
+}
+
 #[derive(Default, PartialEq, Eq, Clone)]
 pub struct ParameterList {
     pub parameters: Vec<Parameter>,
+}
+
+impl ParameterList {
+    pub fn new() -> Self {
+        Self {
+            parameters: Vec::new(),
+        }
+    }
+    pub fn add_parameter(&mut self, parameter: Parameter) {
+        self.parameters.push(parameter)
+    }
+    pub fn _add_parameters(&mut self, mut parameters: Vec<Parameter>) {
+        self.parameters.append(&mut parameters)
+    }
 }
 
 impl<'a, C: Context> Readable<'a, C> for ParameterList {

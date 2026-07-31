@@ -267,6 +267,7 @@ impl InnerPublisher {
             nack_suppression_duration: Duration::ZERO,
             data_max_size_serialized: 0,
             whc: history_cache.clone(),
+            is_keyed: W::is_with_key(),
             topic: topic.clone(),
             qos: dw_qos.clone(),
             writer_command_receiver,

@@ -10,8 +10,9 @@ use super::{
     },
     Header, Message,
 };
+use crate::dds::key::KeyHash;
 use crate::rtps::cache::CacheChange;
-use crate::structure::{EntityId, GuidPrefix};
+use crate::structure::{EntityId, GuidPrefix, ParameterId};
 use speedy::Endianness;
 
 pub struct MessageBuilder {
@@ -143,6 +144,7 @@ impl MessageBuilder {
         writer_id: EntityId,
         reader_id: EntityId,
         cache_change: &CacheChange,
+        key_hash: Option<KeyHash>,
     ) {
         let mut data_flag = DataFlag::from_enndianness(endiannes);
         let payload_length;
@@ -153,12 +155,32 @@ impl MessageBuilder {
         } else {
             payload_length = 0;
         }
-        let inline_qos_len = 0;
+        let mut have_inline_qos = false;
+        let mut inline_qos_params = ParameterList::new();
+        let mut inline_qos_len = 0;
+        if let Some(kh) = key_hash {
+            data_flag |= DataFlag::InlineQos;
+            have_inline_qos = true;
+            let kh_param = Parameter::new(ParameterId::PID_KEY_HASH, kh.to_vec_u8());
+            inline_qos_params.add_parameter(kh_param);
+            inline_qos_len += 20;
+            inline_qos_len += 4; // sentinel
+        }
+        if let Some(_iq) = cache_change.inline_qos.as_ref() {
+            data_flag |= DataFlag::InlineQos;
+            // have_inline_qos = true;
+            todo!();
+        }
+        let inline_qos = if have_inline_qos {
+            Some(inline_qos_params)
+        } else {
+            None
+        };
         let data = Data::new(
             reader_id,
             writer_id,
             cache_change.sequence_number,
-            None,
+            inline_qos,
             serialized_payload.cloned(),
         );
         let data_body = SubMessageBody::Entity(EntitySubmessage::Data(data, data_flag));

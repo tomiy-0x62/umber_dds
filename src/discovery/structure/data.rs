@@ -23,7 +23,7 @@ use speedy::Writable;
 /// This implementation send ParticipantMessageData with GuidPrefix.
 #[derive(Clone, DdsData)]
 pub struct ParticipantMessageData {
-    #[key]
+    // #[key]
     // To serialize the first member of ParticipantMessageData to GuidPrefix.
     pub guid_prefix: GuidPrefix,
     pub kind: ParticipantMessageKind,
@@ -117,7 +117,7 @@ pub struct SDPBuiltinData {
     pub domain_id: Option<u16>,
     pub domain_tag: Option<String>,
     pub protocol_version: Option<ProtocolVersion>,
-    #[key]
+    // #[key]
     pub guid: Option<GUID>,
     pub vendor_id: Option<VendorId>,
     pub expects_inline_qos: Option<bool>,
@@ -941,7 +941,7 @@ impl<C: speedy::Context> speedy::Writable<C> for PublicationBuiltinTopicData {
 
 #[derive(Clone, DdsData)]
 pub struct DiscoveredReaderData {
-    #[key]
+    // #[key]
     key: (),
     // Normally, we would use the key and publication_key from builtin_topic_data to compute the Key, but implementing this is difficult.
     // Since there's currently no need to compute the key, we are using this approach as a temporary solution.
@@ -974,7 +974,7 @@ impl<C: speedy::Context> speedy::Writable<C> for DiscoveredReaderData {
 
 #[derive(Clone, DdsData)]
 pub struct DiscoveredWriterData {
-    #[key]
+    // #[key]
     key: (),
     // Normally, we would use the key and publication_key from builtin_topic_data to compute the Key, but implementing this is difficult.
     // Since there's currently no need to compute the key, we are using this approach as a temporary solution.
@@ -1010,7 +1010,7 @@ pub struct SPDPdiscoveredParticipantData {
     pub domain_id: u16,
     pub _domain_tag: String,
     pub protocol_version: ProtocolVersion,
-    #[key]
+    // #[key]
     pub guid: GUID, // Key
     pub vendor_id: VendorId,
     pub expects_inline_qos: bool,
