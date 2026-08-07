@@ -28,9 +28,9 @@ use syn::{parse_macro_input, Data, DataStruct, DeriveInput, Fields, LitStr};
 ///
 /// ## Key Generation Logic (`gen_key`)
 /// When calculating the `KeyHash`, the macro extracts fields marked with `#[key]`,
-/// serializes them in Big Endian format, and applies the following rules:
-/// 1. **Length <= 16 bytes:** Padded with trailing zeros (`0`) to exactly 16 bytes.
-/// 2. **Length > 16 bytes:** Computes an MD5 hash of the bytes and uses the 16-byte digest.
+/// serializes them in Big Endian format, and applies the following RTPS specification rules:
+/// 1. **Maximum serialized length <= 16 bytes:** Padded with trailing zeros (`0`) to exactly 16 bytes.
+/// 2. **Maximum serialized length > 16 bytes:** Computes an MD5 hash of the bytes and uses the 16-byte digest.
 #[proc_macro_derive(DdsData, attributes(key, dds_data))]
 pub fn derive_ddsdata(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input as DeriveInput);
@@ -115,19 +115,35 @@ pub fn derive_ddsdata(input: TokenStream) -> TokenStream {
             })
         };
 
-        let key_body = quote! {
-            let wrapper = self.gen_key_holder()?;
-            let mut result = wrapper.write_to_vec_with_ctx(speedy::Endianness::BigEndian).unwrap();
+        let mut max_cdr_size = 0usize;
+        let mut is_bounded = true;
+        for (_, ty) in &keys {
+            if !get_type_max_size(ty, &mut max_cdr_size) {
+                is_bounded = false;
+                break;
+            }
+        }
 
-            let rlen = result.len();
-            if rlen <= 16 {
-                for _ in 0..(16-rlen) {
-                    result.push(0);
-                }
-                Some(KeyHash::new(&result[0 .. 16]))
-            } else {
+        let use_md5 = !is_bounded || max_cdr_size > 16;
+
+        let key_body = if use_md5 {
+            quote! {
+                let wrapper = self.gen_key_holder()?;
+                let result = wrapper.write_to_vec_with_ctx(speedy::Endianness::BigEndian).unwrap();
                 let md5 = md5::compute(result);
                 Some(KeyHash::new(&md5.0))
+            }
+        } else {
+            quote! {
+                let wrapper = self.gen_key_holder()?;
+                let mut result = wrapper.write_to_vec_with_ctx(speedy::Endianness::BigEndian).unwrap();
+                let rlen = result.len();
+                if rlen < 16 {
+                    for _ in 0..(16 - rlen) {
+                        result.push(0);
+                    }
+                }
+                Some(KeyHash::new(&result[0 .. 16]))
             }
         };
 
@@ -159,6 +175,46 @@ pub fn derive_ddsdata(input: TokenStream) -> TokenStream {
     };
 
     TokenStream::from(expanded)
+}
+
+/// Evaluates the maximum serialized size of a type.
+/// Returns `true` if the type has a known bounded size, updating `offset`.
+/// Returns `false` if the type is dynamically sized or unknown.
+fn get_type_max_size(ty: &syn::Type, offset: &mut usize) -> bool {
+    let type_string = quote!(#ty).to_string().replace(" ", "");
+
+    if let Some((inner_ty, len)) = get_array_info(ty) {
+        for _ in 0..len {
+            if !get_type_max_size(inner_ty, offset) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    if get_vec_inner_type(ty).is_some()
+        || get_map_info(ty).is_some()
+        || type_string.contains("String")
+    {
+        return false;
+    }
+
+    let align_and_size = match type_string.as_str() {
+        "u8" | "i8" | "bool" | "char" => Some((1, 1)),
+        "u16" | "i16" => Some((2, 2)),
+        "u32" | "i32" | "f32" => Some((4, 4)),
+        "u64" | "i64" | "f64" => Some((8, 8)),
+        _ => None,
+    };
+
+    if let Some((align, size)) = align_and_size {
+        let pad = (align - (*offset % align)) % align;
+        *offset += pad;
+        *offset += size;
+        return true;
+    }
+
+    false
 }
 
 /// Vec<T> -> T
