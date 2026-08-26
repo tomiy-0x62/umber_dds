@@ -25,6 +25,13 @@ impl EntityId {
         }
     }
 
+    pub fn from_bits(bits: [u8; 4]) -> Self {
+        Self {
+            entity_key: bits[0..3].try_into().unwrap(),
+            entity_kind: EntityKind { value: bits[3] },
+        }
+    }
+
     pub fn as_token(&self) -> Token {
         let u = self.as_usize();
         Token(u)

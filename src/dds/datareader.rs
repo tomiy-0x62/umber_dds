@@ -106,38 +106,43 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
 
     fn deserialize_changes(&self, changes: Vec<&CacheChange>) -> Vec<DataSample<R>> {
         let mut v: Vec<DataSample<R>> = Vec::new();
-        for (d, ts, ih) in changes
+        for (d, ts, ih, ir) in changes
             .iter()
-            .filter(|change| change.data_value().is_some())
+            // .filter(|change| change.data_value().is_some())
             .map(|change| {
                 (
-                    change.data_value().unwrap(),
+                    change.data_value(),
                     change.timestamp,
                     change.instance_handle,
+                    change.is_read,
                 )
             })
         {
-            let received_bytes = d.to_bytes();
-            let encapsulation_kind =
-                RepresentationIdentifier::new([received_bytes[0], received_bytes[1]]);
-            let _encapsulation_option = [received_bytes[2], received_bytes[3]];
-            let endianness = match encapsulation_kind {
-                RepresentationIdentifier::CDR_LE => Endianness::LittleEndian,
-                RepresentationIdentifier::CDR_BE => Endianness::BigEndian,
-                rep => {
-                    let bytes = rep.bytes();
-                    panic!(
-                        "unexpected encapsulation_kind: [0x{:02x}, 0x{:02x}]",
-                        bytes[0], bytes[1]
-                    )
+            if let Some(sp) = d {
+                let received_bytes = sp.to_bytes();
+                let encapsulation_kind =
+                    RepresentationIdentifier::new([received_bytes[0], received_bytes[1]]);
+                let _encapsulation_option = [received_bytes[2], received_bytes[3]];
+                let endianness = match encapsulation_kind {
+                    RepresentationIdentifier::CDR_LE => Endianness::LittleEndian,
+                    RepresentationIdentifier::CDR_BE => Endianness::BigEndian,
+                    rep => {
+                        let bytes = rep.bytes();
+                        panic!(
+                            "unexpected encapsulation_kind: [0x{:02x}, 0x{:02x}]",
+                            bytes[0], bytes[1]
+                        )
+                    }
+                };
+                match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
+                    Ok(data) => v.push(DataSample::new(Some(data), SampleInfo::new(ir, ts, ih))),
+                    Err(e) => error!(
+                        "DataReader failed to deserialize: '{}'\n\tDataReader: {}\n\tTopic: {}",
+                        e, self._reader_guid, self.topic
+                    ),
                 }
-            };
-            match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
-                Ok(data) => v.push(DataSample::new(data, SampleInfo::new(ts, ih))),
-                Err(e) => error!(
-                    "DataReader failed to deserialize: '{}'\n\tDataReader: {}\n\tTopic: {}",
-                    e, self._reader_guid, self.topic
-                ),
+            } else {
+                v.push(DataSample::new(None, SampleInfo::new(ir, ts, ih)));
             }
         }
         v

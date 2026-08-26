@@ -12,6 +12,9 @@ impl KeyHash {
         hash_in.copy_from_slice(bytes);
         Self { hash: hash_in }
     }
+    pub fn to_bits(&self) -> [u8; 16] {
+        self.hash
+    }
     pub fn to_vec_u8(&self) -> Vec<u8> {
         Vec::from(&self.hash)
     }

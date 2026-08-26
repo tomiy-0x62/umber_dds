@@ -28,6 +28,13 @@ impl GUID {
             entity_id: EntityId::PARTICIPANT,
         }
     }
+
+    pub fn from_bits(bits: [u8; 16]) -> Self {
+        Self {
+            guid_prefix: GuidPrefix::from_bits(bits[0..12].try_into().unwrap()),
+            entity_id: EntityId::from_bits(bits[12..].try_into().unwrap()),
+        }
+    }
 }
 
 impl fmt::Display for GUID {
@@ -62,6 +69,10 @@ impl GuidPrefix {
         bytes[0] = crate::structure::vendor_id::VendorId::THIS_IMPLEMENTATION.vendor_id[0];
         bytes[1] = crate::structure::vendor_id::VendorId::THIS_IMPLEMENTATION.vendor_id[1];
         Self { guid_prefix: bytes }
+    }
+
+    pub fn from_bits(bits: [u8; 12]) -> Self {
+        Self { guid_prefix: bits }
     }
 }
 

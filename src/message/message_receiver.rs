@@ -33,7 +33,7 @@ use speedy::Endianness;
 use std::error;
 
 #[derive(Debug, Clone)]
-enum MessageError {
+pub enum MessageError {
     Error(String),
     Warn(String),
 }
@@ -50,6 +50,62 @@ impl fmt::Display for MessageError {
 impl error::Error for MessageError {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         None
+    }
+}
+
+struct DataKey {
+    pub _participant_guid: Option<GUID>,
+    pub endpoint_guid: Option<GUID>,
+}
+impl DataKey {
+    pub fn empty() -> Self {
+        Self {
+            _participant_guid: None,
+            endpoint_guid: None,
+        }
+    }
+    pub fn from_parameter_list(param_list: &ParameterList) -> Result<Self, MessageError> {
+        let mut _participant_guid = None;
+        let mut endpoint_guid = None;
+        for parameter in &param_list.parameters {
+            match parameter.parameter_id {
+                ParameterId::PID_PARTICIPANT_GUID => {
+                    _participant_guid = Some(
+                        GUID::read_from_buffer_with_ctx(Endianness::LittleEndian, &parameter.value)
+                            .map_err(|e| {
+                                MessageError::Error(format!(
+                                    "failed deserialize GUID in serializedKey: {}",
+                                    e
+                                ))
+                            })?,
+                    );
+                }
+                ParameterId::PID_ENDPOINT_GUID => {
+                    endpoint_guid = Some(
+                        GUID::read_from_buffer_with_ctx(Endianness::LittleEndian, &parameter.value)
+                            .map_err(|e| {
+                                MessageError::Error(format!(
+                                    "failed deserialize GUID in serializedKey: {}",
+                                    e
+                                ))
+                            })?,
+                    );
+                }
+                ParameterId::PID_SENTINEL => {
+                    break;
+                }
+                _ => {
+                    warn!(
+                                "received DATA with serializedKey. It include unsupported parameter: pid: 0x{:04x}, parameter: {:?}",
+                                parameter.parameter_id.value, parameter.value
+                            );
+                }
+            }
+        }
+        Ok(Self {
+            _participant_guid,
+            endpoint_guid,
+        })
     }
 }
 
@@ -371,55 +427,74 @@ impl MessageReceiver {
             return Err(MessageError::Warn("Invalid Data Submessage".to_string()));
         }
 
-        let mut key_hash: Option<KeyHash> = None;
+        // rtps 2.3 spec, 8.3.7.2.5 Logical Interpretation
+        let writer_guid = GUID::new(self.source_guid_prefix, data.writer_id);
+        let _reader_guid = GUID::new(self.dest_guid_prefix, data.reader_id);
 
         // TODO: check inlineQos is valid
-        if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
-            // the serializedPayload element is interpreted as the value of the dtat-object
-        }
-        if flag.contains(DataFlag::Key) && !flag.contains(DataFlag::Data) {
+        let data_key = if flag.contains(DataFlag::Key) && !flag.contains(DataFlag::Data) {
             // the serializedPayload element is interpreted as the value of the key that identifies the registered instance of the data-object.
-        }
+            let sp = &data
+                .serialized_payload
+                .as_ref()
+                .ok_or(MessageError::Error("invalied DATA submessage: Key flag is set and Data flag not set but no serializedPayload".to_string()))?;
+            let endiannes = match sp.representation_identifier {
+                RepresentationIdentifier::PL_CDR_BE => Endianness::BigEndian,
+                RepresentationIdentifier::PL_CDR_LE => Endianness::LittleEndian,
+                rep_id => {
+                    return Err(MessageError::Error(format!(
+                    "invalied DATA submessage: Key flag is set and Data flag is not set. expect RepresentationIdentifier::PL_CDR* but {:?}",
+                    rep_id,
+                )))
+                }
+            };
+            let param_list =
+                ParameterList::read_from_buffer_with_ctx(endiannes, &sp.value.slice(..)).map_err(
+                    |e| {
+                        MessageError::Error(format!(
+                            "invalied DATA submessage: failed deserialize serializedKey: {}",
+                            e
+                        ))
+                    },
+                )?;
+            DataKey::from_parameter_list(&param_list)?
+        } else {
+            DataKey::empty()
+        };
+        let inline_qos;
         if flag.contains(DataFlag::InlineQos) {
             // the inlineQos element contains QoS values that override those of the RTPS Writer and should
             // be used to process the update. For a complete list of possible in-line QoS parameters, see Table 8.80.
-            if let Some(inline_qos) = &data.inline_qos {
-                for parameter in &inline_qos.parameters {
-                    match parameter.parameter_id {
-                        ParameterId::PID_KEY_HASH => {
-                            key_hash = KeyHash::read_from_buffer_with_ctx(
-                                Endianness::LittleEndian,
-                                &parameter.value,
-                            )
-                            .ok();
-                        }
-                        ParameterId::PID_SENTINEL => {
-                            break;
-                        }
-                        _ => {
-                            warn!(
-                                "received DATA with inlineQos. It include unsupported parameter: pid: 0x{:04x}, parameter: {:?}",
-                                parameter.parameter_id.value, parameter.value
-                            );
-                        }
-                    }
-                }
+            if let Some(param_list) = &data.inline_qos {
+                inline_qos = InlineQos::from_parameter_list(param_list)?;
             } else {
                 return Err(MessageError::Error(
                     "received DATA with InlineQosFlag is set but not contains inlineQos"
                         .to_string(),
                 ));
             }
+        } else {
+            inline_qos = InlineQos::empty();
         }
+
+        // Fast DDS 3.6.2:
+        // DATA(w/r[UD]): inlineQos: PID_STATUS_INFO, PID_KEY_HASH(GUID)
+        // DATA([_D]): inlineQos: PID_STATUS_INFO, PID_KEY_HASH(KeyHash)
+        // Cyclone DDS 11.0.1:
+        // DATA(p[UD]): inlineQos: PID_STATUS_INFO, serializedKey: PARTICIPANT_GUID
+        // DATA(w/r[UD]): inlineQos: PID_STATUS_INFO, serializedKey: ENDPOINT_GUID
+
         if flag.contains(DataFlag::NonStandardPayload) {
             // the serializedPayload element is not formatted according to Section 10.
             // This flag is informational. It indicates that the SerializedPayload has been transformed as described in another specification
             // For example, this flag should be set when the SerializedPayload is transformed as described in the DDS-Security specification
         }
 
-        // rtps 2.3 spec, 8.3.7.2.5 Logical Interpretation
-        let writer_guid = GUID::new(self.source_guid_prefix, data.writer_id);
-        let _reader_guid = GUID::new(self.dest_guid_prefix, data.reader_id);
+        if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
+            // the serializedPayload element is interpreted as the value of the dtat-object
+        }
+
+        let key_hash = inline_qos.key_hash;
 
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let change = CacheChangeIng::new(
@@ -441,12 +516,28 @@ impl MessageReceiver {
             || data.reader_id == EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR
         {
             // if msg is for SEDP(w)
-            self.handle_sedp_w_data(data, change, ts, readers)?;
+            self.handle_sedp_w_data(
+                data,
+                flag.contains(DataFlag::Data),
+                change,
+                ts,
+                inline_qos,
+                data_key,
+                readers,
+            )?;
         } else if data.writer_id == EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER
             || data.reader_id == EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR
         {
             // if msg is for SEDP(r)
-            self.handle_sedp_r_data(data, change, writers, readers)?;
+            self.handle_sedp_r_data(
+                data,
+                flag.contains(DataFlag::Data),
+                change,
+                inline_qos,
+                data_key,
+                writers,
+                readers,
+            )?;
         } else if data.writer_id == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_WRITER
             || data.reader_id == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER
         {
@@ -796,13 +887,53 @@ impl MessageReceiver {
         */
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
     fn handle_sedp_w_data(
         &mut self,
         data: Data,
+        have_data: bool,
         change: CacheChangeIng,
         ts: Timestamp,
+        inline_qos: InlineQos,
+        data_key: DataKey,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
+        if let Some(status_info) = inline_qos.status_info {
+            if status_info.contains(StatusInfoFlag::Disposed)
+                && status_info.contains(StatusInfoFlag::Unregistered)
+            {
+                let target_guid = if let Some(eg) = data_key.endpoint_guid {
+                    eg
+                } else {
+                    if let Some(kh) = inline_qos.key_hash {
+                        GUID::from_bits(kh.to_bits())
+                    } else {
+                        warn!("DATA(w[UD]) received, but target GUID is not specified");
+                        return Ok(());
+                    }
+                };
+                self.disc_db.update_remote_writer_state(
+                    target_guid,
+                    crate::discovery::discovery_db::EndpointState::LivelinessLost,
+                );
+                let mut found = false;
+                for reader in readers.values_mut() {
+                    if reader.is_contain_writer(target_guid) {
+                        found = true;
+                        reader.delete_writer_proxy(target_guid.guid_prefix);
+                    }
+                }
+                if !found {
+                    warn!(
+                        "DATA(w[UD]) received, not found reader which matches target writer. GUID: {}",
+                        target_guid
+                    );
+                }
+            }
+        }
+        if !have_data {
+            return Ok(());
+        }
         let mut deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
             let bytes = sp.to_bytes();
             let encapsulation_kind = RepresentationIdentifier::new([bytes[0], bytes[1]]);
@@ -830,7 +961,8 @@ impl MessageReceiver {
             }
         } else {
             return Err(MessageError::Warn(
-                "received sedp message without serializedPayload".to_string(),
+                "received sedp message which set data flag but without serializedPayload"
+                    .to_string(),
             ));
         };
         let writer_proxy = if let Some(participant_data) =
@@ -914,13 +1046,49 @@ impl MessageReceiver {
         };
         Ok(())
     }
+    #[allow(clippy::too_many_arguments)]
     fn handle_sedp_r_data(
-        &self,
+        &mut self,
         data: Data,
+        have_data: bool,
         change: CacheChangeIng,
+        inline_qos: InlineQos,
+        data_key: DataKey,
         writers: &mut BTreeMap<EntityId, Writer>,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
+        if let Some(status_info) = inline_qos.status_info {
+            if status_info.contains(StatusInfoFlag::Disposed)
+                && status_info.contains(StatusInfoFlag::Unregistered)
+            {
+                let target_guid = if let Some(eg) = data_key.endpoint_guid {
+                    eg
+                } else {
+                    if let Some(kh) = inline_qos.key_hash {
+                        GUID::from_bits(kh.to_bits())
+                    } else {
+                        warn!("DATA(r[UD]) received, but target GUID is not specified");
+                        return Ok(());
+                    }
+                };
+                let mut found = false;
+                for writer in writers.values_mut() {
+                    if writer.is_contain_reader(target_guid) {
+                        found = true;
+                        writer.delete_reader_proxy(target_guid.guid_prefix);
+                    }
+                }
+                if !found {
+                    warn!(
+                        "DATA(r[UD]) received, not found writer which matches target reader. GUID: {}",
+                        target_guid
+                    );
+                }
+            }
+        }
+        if !have_data {
+            return Ok(());
+        }
         let mut deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
             let bytes = sp.to_bytes();
             let encapsulation_kind = RepresentationIdentifier::new([bytes[0], bytes[1]]);
@@ -948,7 +1116,8 @@ impl MessageReceiver {
             }
         } else {
             return Err(MessageError::Warn(
-                "received sedp message without serializedPayload".to_string(),
+                "received sedp message whitch set data flag but without serializedPayload"
+                    .to_string(),
             ));
         };
         let reader_proxy = if let Some(participant_data) =

@@ -23,10 +23,12 @@ pub struct CacheChange {
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
     pub inline_qos: Option<ParameterList>,
-    pub instance_handle: InstanceHandle, // In DDS, the value of the fields
-                                         // labeled as ‘key’ within the data
-                                         // uniquely identify each data-
-                                         // object.
+    // In DDS, the value of the fields
+    // labeled as ‘key’ within the data
+    // uniquely identify each data-
+    // object.
+    pub instance_handle: InstanceHandle,
+    pub is_read: bool,
 }
 
 impl CacheChange {
@@ -47,6 +49,7 @@ impl CacheChange {
             data_value,
             inline_qos,
             instance_handle,
+            is_read: false,
         }
     }
 
@@ -548,9 +551,22 @@ impl HistoryCache {
                 .filter(|k| k.guid == *guid)
                 .cloned()
                 .collect();
-            todo_remove
-                .iter()
-                .for_each(|k| self.remove_change(k, false));
+            todo_remove.iter().for_each(|k| {
+                self.remove_change(k, false);
+                match self.hc_type {
+                    HistoryCacheType::Writer => {
+                        self.unprocessed_seqnum.remove(&k.seq_num);
+                    }
+                    HistoryCacheType::Reader => {
+                        self.taken_key.remove(k);
+                        self.ready_key.remove(k);
+                    }
+                    HistoryCacheType::Dummy => unreachable!(),
+                }
+                for keys in self.kind2key.values_mut() {
+                    keys.remove(k);
+                }
+            });
         }
     }
 

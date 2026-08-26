@@ -428,7 +428,7 @@ impl Discovery {
                     TokenDec::Entity(eid) => {
                         if eid.is_reader() {
                             unimplemented!();
-                        } else if eid.is_reader() {
+                        } else if eid.is_writer() {
                             unimplemented!();
                         } else {
                             unreachable!();

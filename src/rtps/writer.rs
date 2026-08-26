@@ -450,21 +450,12 @@ impl Writer {
         );
         let mut message_builder = MessageBuilder::new();
         message_builder.info_ts(Endianness::LittleEndian, Some(time_stamp));
-        let key_hash = if self.is_keyed {
-            if let Some(kh) = self.writer_cache.read().ih2kh(a_change.instance_handle) {
-                Some(kh)
-            } else {
-                unreachable!();
-            }
-        } else {
-            None
-        };
         message_builder.data(
             Endianness::LittleEndian,
             self.guid.entity_id,
             EntityId::SPDP_BUILTIN_PARTICIPANT_DETECTOR,
             &a_change,
-            key_hash,
+            None,
         );
         let message = message_builder.build(self.guid_prefix());
         let message_buf = message
@@ -666,7 +657,7 @@ impl Writer {
                     let mut message_builder = MessageBuilder::new();
                     let time_stamp = Timestamp::now();
                     message_builder.info_ts(Endianness::LittleEndian, time_stamp);
-                    let key_hash = if self.is_keyed {
+                    let key_hash = if self.is_keyed && !self.entity_id().is_builtin() {
                         if let Some(kh) = self.writer_cache.read().ih2kh(aa_change.instance_handle)
                         {
                             Some(kh)
@@ -1066,6 +1057,10 @@ impl Writer {
         for d in to_delete {
             self.matched_reader_remove(d);
         }
+    }
+
+    pub fn is_contain_reader(&self, reader_guid: GUID) -> bool {
+        self.matched_readers.contains_key(&reader_guid)
     }
 
     pub fn heartbeat_period(&self) -> CoreDuration {

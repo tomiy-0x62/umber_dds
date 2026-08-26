@@ -17,15 +17,19 @@ pub(crate) use {
     inforeply_ip4::InfoReplyIp4, infosrc::InfoSource, infots::InfoTimestamp, nackfrag::NackFrag,
 };
 
+use crate::message::message_receiver::MessageError;
 use crate::structure::Duration;
 use crate::structure::ParameterId;
 use crate::utils::pad_len;
+use crate::KeyHash;
 use alloc::fmt;
 use bytes::{BufMut, Bytes, BytesMut};
 use core::cmp::{max, min};
 use core::ops::{Add, AddAssign};
 use core::ops::{Sub, SubAssign};
 use core::time::Duration as CoreDuration;
+use enumflags2::{bitflags, BitFlags};
+use log::warn;
 use speedy::{Context, Endianness, Readable, Reader, Writable, Writer};
 use std::io::{self, Read};
 use std::net::Ipv4Addr;
@@ -176,6 +180,84 @@ pub struct NumberSet<T> {
     pub num_bits: u32,
     #[speedy(length = num_bits.div_ceil(32))]
     pub bitmap: Vec<u32>,
+}
+
+#[derive(Clone, Copy)]
+#[bitflags]
+#[repr(u8)]
+pub enum StatusInfoFlag {
+    Disposed = 0b001,
+    Unregistered = 0b010,
+    Filtered = 0b100, // rtps v2.5
+}
+
+impl StatusInfoFlag {
+    pub fn from_u8(n: u8) -> BitFlags<StatusInfoFlag> {
+        let d = (n & 0b001) == 0b001;
+        let u = (n & 0b010) == 0b010;
+        let f = (n & 0b100) == 0b100;
+        let mut flag = BitFlags::<StatusInfoFlag>::empty();
+        if d {
+            flag |= StatusInfoFlag::Disposed;
+        }
+        if u {
+            flag |= StatusInfoFlag::Unregistered;
+        }
+        if f {
+            flag |= StatusInfoFlag::Filtered;
+        }
+        flag
+    }
+}
+
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub struct InlineQos {
+    pub status_info: Option<BitFlags<StatusInfoFlag>>,
+    pub key_hash: Option<KeyHash>,
+}
+
+impl InlineQos {
+    pub fn empty() -> Self {
+        Self {
+            status_info: None,
+            key_hash: None,
+        }
+    }
+    pub fn from_parameter_list(param_lsit: &ParameterList) -> Result<Self, MessageError> {
+        let mut status_info = None;
+        let mut key_hash = None;
+        for param in &param_lsit.parameters {
+            match param.parameter_id {
+                ParameterId::PID_KEY_HASH => {
+                    key_hash = match KeyHash::read_from_buffer_with_ctx(
+                        Endianness::LittleEndian,
+                        &param.value,
+                    ) {
+                        Ok(kh) => Some(kh),
+                        Err(e) => {
+                            return Err(MessageError::Error(format!(
+                                "failed deseriarize KeyHash in InlineQos: {}",
+                                e
+                            )))
+                        }
+                    }
+                }
+                ParameterId::PID_STATUS_INFO => {
+                    if param.value.len() != 4{
+                        return Err(MessageError::Error(format!("failed deseriarize StatusInfo in InlineQos: format if wrong. '{:?}'", param.value)));
+                    }
+                    let flag_u8 = param.value[3];
+                    status_info = Some(StatusInfoFlag::from_u8(flag_u8));
+                }
+                ParameterId::PID_SENTINEL => break,
+                pid => warn!("received DATA with inlineQos. It include unsupported parameter: pid: 0x{:04x}, parameter: {:?}", pid.value, param.value),
+            }
+        }
+        Ok(Self {
+            status_info,
+            key_hash,
+        })
+    }
 }
 
 #[derive(PartialEq, Eq, Clone)]
@@ -450,7 +532,7 @@ impl fmt::Display for Locator {
 
 pub type LocatorList = Vec<Locator>;
 
-#[derive(Readable, Writable, Clone, Copy, PartialEq, Eq)]
+#[derive(Readable, Writable, Clone, Copy, PartialEq, Eq, Debug)]
 pub struct RepresentationIdentifier {
     bytes: [u8; 2],
 }
