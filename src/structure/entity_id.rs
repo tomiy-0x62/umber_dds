@@ -147,18 +147,18 @@ impl EntityId {
     };
 
     fn as_usize(&self) -> usize {
-        let u0 = self.entity_key[0] as u32;
-        let u1 = self.entity_key[1] as u32;
-        let u2 = self.entity_key[2] as u32;
-        let u3 = self.entity_kind.value as u32;
+        let u0 = self.entity_kind.value as u32;
+        let u1 = self.entity_key[2] as u32;
+        let u2 = self.entity_key[1] as u32;
+        let u3 = self.entity_key[0] as u32;
         ((u0 << 24) | (u1 << 16) | (u2 << 8) | u3) as usize
     }
 
     pub fn from_usize(n: usize) -> Self {
-        let ek = n & 0xff;
-        let e2 = (n & 0xff00) >> 8;
-        let e1 = (n & 0xff0000) >> 16;
-        let e0 = (n & 0xff000000) >> 24;
+        let e0 = n & 0xff;
+        let e1 = (n & 0xff00) >> 8;
+        let e2 = (n & 0xff0000) >> 16;
+        let ek = (n & 0xff000000) >> 24;
         Self {
             entity_key: [e0 as u8, e1 as u8, e2 as u8],
             entity_kind: EntityKind { value: ek as u8 },

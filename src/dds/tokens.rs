@@ -8,7 +8,7 @@ pub enum TokenDec {
 
 impl TokenDec {
     pub fn decode(token: Token) -> Self {
-        if Token(0x40) <= token && Token(0x60) > token {
+        if Token(0x40) <= token && Token(0x80) > token {
             Self::ReservedToken(token)
         } else {
             let n: usize = token.into();
