@@ -116,11 +116,14 @@ impl DomainParticipant {
             network_interfaces
         };
 
+        let (drop_entity_sender, drop_entity_receiver) = mio_channel::channel();
+
         let (dp_inner, ev_loop_ing) = DomainParticipantInner::new(
             domain_id,
             participant_msg_cmd_sender,
             dp_network_interfaces.clone(),
             participant_config,
+            drop_entity_sender,
             small_rng,
         );
         let dp = Self {
@@ -171,6 +174,7 @@ impl DomainParticipant {
                     discovery_db,
                     serialized_spdp_data,
                     spdp_data_kh,
+                    drop_entity_receiver,
                     discdb_update_sender,
                     notify_new_writer_receiver,
                     notify_new_reader_receiver,
@@ -267,6 +271,7 @@ pub(crate) struct DomainParticipantInner {
     pub my_guid: GUID,
     create_writer_sender: mio_channel::SyncSender<WriterIngredients>,
     create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
+    drop_entity_sender: mio_channel::Sender<GUID>,
     ev_loop_handler: Option<thread::JoinHandle<()>>,
     discovery_handler: Option<thread::JoinHandle<()>>,
     entity_key_generator: AtomicU32,
@@ -288,6 +293,7 @@ impl DomainParticipantInner {
         participant_msg_cmd_sender: mio_channel::SyncSender<ParticipantMessageCmd>,
         network_interfaces: Vec<Ipv4Addr>,
         participant_config: ParticipantConfig,
+        drop_entity_sender: mio_channel::Sender<GUID>,
         small_rng: &mut SmallRng,
     ) -> (DomainParticipantInner, EvLoopIngredients) {
         let mut socket_list: BTreeMap<mio_v06::Token, UdpSocket> = BTreeMap::new();
@@ -392,6 +398,7 @@ impl DomainParticipantInner {
             my_guid,
             create_writer_sender,
             create_reader_sender,
+            drop_entity_sender,
             ev_loop_handler: None,
             discovery_handler: None,
             // largest pre-difined entityKey is {00, 02, 01} @DDS-Security 1.1
@@ -429,6 +436,7 @@ impl DomainParticipantInner {
                 dp,
                 self.create_writer_sender.clone(),
                 self.participant_msg_cmd_sender.clone(),
+                self.drop_entity_sender.clone(),
             ),
             PublisherQos::Policies(q) => Publisher::new(
                 guid,
@@ -436,6 +444,7 @@ impl DomainParticipantInner {
                 dp,
                 self.create_writer_sender.clone(),
                 self.participant_msg_cmd_sender.clone(),
+                self.drop_entity_sender.clone(),
             ),
         }
     }
@@ -451,10 +460,15 @@ impl DomainParticipantInner {
                 self.default_subscriber_qos.clone(),
                 dp,
                 self.create_reader_sender.clone(),
+                self.drop_entity_sender.clone(),
             ),
-            SubscriberQos::Policies(q) => {
-                Subscriber::new(guid, *q, dp, self.create_reader_sender.clone())
-            }
+            SubscriberQos::Policies(q) => Subscriber::new(
+                guid,
+                *q,
+                dp,
+                self.create_reader_sender.clone(),
+                self.drop_entity_sender.clone(),
+            ),
         }
     }
 

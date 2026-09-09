@@ -38,6 +38,7 @@ struct InnerPublisher {
     dp: DomainParticipant,
     create_writer_sender: mio_channel::SyncSender<WriterIngredients>,
     participant_msg_cmd_sender: mio_channel::SyncSender<ParticipantMessageCmd>,
+    drop_entity_sender: mio_channel::Sender<GUID>,
 }
 
 impl Publisher {
@@ -47,6 +48,7 @@ impl Publisher {
         dp: DomainParticipant,
         create_writer_sender: mio_channel::SyncSender<WriterIngredients>,
         participant_msg_cmd_sender: mio_channel::SyncSender<ParticipantMessageCmd>,
+        drop_entity_sender: mio_channel::Sender<GUID>,
     ) -> Self {
         let default_dw_qos = DataWriterQosBuilder::new().build();
         Self {
@@ -57,6 +59,7 @@ impl Publisher {
                 dp,
                 create_writer_sender,
                 participant_msg_cmd_sender,
+                drop_entity_sender,
             ))),
         }
     }
@@ -160,6 +163,7 @@ impl InnerPublisher {
         dp: DomainParticipant,
         create_writer_sender: mio_channel::SyncSender<WriterIngredients>,
         participant_msg_cmd_sender: mio_channel::SyncSender<ParticipantMessageCmd>,
+        drop_entity_sender: mio_channel::Sender<GUID>,
     ) -> Self {
         info!("created new Publisher {}", guid);
         Self {
@@ -169,6 +173,7 @@ impl InnerPublisher {
             dp,
             create_writer_sender,
             participant_msg_cmd_sender,
+            drop_entity_sender,
         }
     }
 
@@ -283,6 +288,7 @@ impl InnerPublisher {
                 outter,
                 history_cache,
                 writer_state_receiver,
+                self.drop_entity_sender.clone(),
             ),
             writer_ing,
         )

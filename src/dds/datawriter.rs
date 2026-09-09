@@ -7,18 +7,21 @@ use crate::dds::{
     },
     topic::Topic,
 };
+use crate::message::message_receiver::DataKey;
 use crate::message::submessage::element::{
-    RepresentationIdentifier, SequenceNumber, SerializedPayload, Timestamp,
+    InlineQos, ParameterList, RepresentationIdentifier, SequenceNumber, SerializedPayload,
+    StatusInfoFlag, Timestamp,
 };
 use crate::rtps::{
-    cache::{AddChangeErr, CacheChange, ChangeKind, HistoryCache, InstanceHandle},
+    cache::{AddChangeErr, CacheChange, ChangeKind, DataKind, HistoryCache, InstanceHandle},
     writer::*,
 };
-use crate::structure::GUID;
+use crate::structure::{EntityKind, GUID};
 use alloc::sync::Arc;
 use awkernel_sync::rwlock::RwLock;
 use core::marker::PhantomData;
 use core::time::Duration as CoreDuration;
+use enumflags2::BitFlags;
 use log::{info, trace, warn};
 use mio_extras::channel as mio_channel;
 use mio_v06::{event::Evented, Poll, PollOpt, Ready, Token};
@@ -43,6 +46,7 @@ pub struct DataWriter<W: Writable<Endianness> + DdsData> {
     // I implement guid for DataWriter when need.
     writer_command_sender: mio_channel::SyncSender<WriterCmd>,
     writer_state_receiver: mio_channel::Receiver<DataWriterStatusChanged>,
+    drop_entity_sender: mio_channel::Sender<GUID>,
 }
 
 impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
@@ -54,6 +58,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         publisher: Publisher,
         whc: Arc<RwLock<HistoryCache>>,
         writer_state_receiver: mio_channel::Receiver<DataWriterStatusChanged>,
+        drop_entity_sender: mio_channel::Sender<GUID>,
     ) -> Self {
         if writer_guid.entity_id.is_builtin() {
             info!(
@@ -79,6 +84,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             last_change_sequence_number: SequenceNumber(0),
             writer_command_sender,
             writer_state_receiver,
+            drop_entity_sender,
         }
     }
     pub fn get_qos(&self) -> DataWriterQosPolicies {
@@ -88,13 +94,19 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         self.qos = qos;
     }
 
+    pub fn stop(&self) {
+        self.drop_entity_sender
+            .send(self.writer_guid)
+            .expect("failed send drop_entity_sender");
+    }
+
     /// publish data for matching DataReader
     pub fn write(&mut self, data: &W) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let key_hash = data.gen_key();
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::CDR_LE);
-        self.writer_data_to_hc(ts, serialized_payload, key_hash, true);
+        self.writer_data_to_hc(ts, serialized_payload, DataKind::Data, key_hash, true, None);
     }
 
     /// + inc_seq_num: whether the seq_num needs to be incremented.
@@ -103,7 +115,14 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         let key_hash = data.gen_key();
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::PL_CDR_LE);
-        self.writer_data_to_hc(ts, serialized_payload, key_hash, inc_seq_num);
+        self.writer_data_to_hc(
+            ts,
+            serialized_payload,
+            DataKind::Data,
+            key_hash,
+            inc_seq_num,
+            None,
+        );
     }
 
     /// + inc_seq_num: whether the seq_num needs to be incremented.
@@ -114,15 +133,44 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         inc_seq_num: bool,
     ) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
-        self.writer_data_to_hc(ts, data, key_hash, inc_seq_num);
+        self.writer_data_to_hc(ts, data, DataKind::Data, key_hash, inc_seq_num, None);
+    }
+
+    pub(crate) fn write_data_ud(&mut self, guid: GUID) {
+        let ts = Timestamp::now().expect("failed to get Timestamp::now()");
+        let mut inlie_qos = InlineQos::empty();
+        let mut si = BitFlags::<StatusInfoFlag>::empty();
+        si |= StatusInfoFlag::Unregistered;
+        si |= StatusInfoFlag::Disposed;
+        inlie_qos.status_info = Some(si);
+        let param_list = inlie_qos.as_parameter_list();
+        let mut data_key = DataKey::empty();
+        if guid.entity_id.entity_kind() == EntityKind::PARTICIPANT_BUILT_IN {
+            data_key.participant_guid = Some(guid);
+        } else {
+            data_key.endpoint_guid = Some(guid);
+        }
+        let serialized_payload =
+            SerializedPayload::new_from_cdr_data(&data_key, RepresentationIdentifier::PL_CDR_LE);
+        info!("write DATA [UD] of {}", guid);
+        self.writer_data_to_hc(
+            ts,
+            serialized_payload,
+            DataKind::Key,
+            None,
+            true,
+            Some(param_list),
+        );
     }
 
     fn writer_data_to_hc(
         &mut self,
         ts: Timestamp,
         serialized_payload: SerializedPayload,
+        data_kind: DataKind,
         key_hash: Option<KeyHash>,
         inc_seq_num: bool,
+        inlie_qos: Option<ParameterList>,
     ) {
         if inc_seq_num {
             self.last_change_sequence_number += SequenceNumber(1);
@@ -140,7 +188,8 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             self.last_change_sequence_number,
             ts,
             Some(serialized_payload),
-            None,
+            data_kind,
+            inlie_qos,
             instance_handle,
         );
         loop {

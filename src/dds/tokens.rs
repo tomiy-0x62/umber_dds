@@ -51,3 +51,4 @@ pub const CHECK_MANUAL_LIVELINESS_TIMER: Token = Token(PTB + 0x1C);
 pub const WRITER_DEADLINE_TIMER: Token = Token(PTB + 0x1D);
 pub const READER_DEADLINE_TIMER: Token = Token(PTB + 0x1E);
 pub const READER_LIFESPAN_TIMER: Token = Token(PTB + 0x1F);
+pub const DROP_ENTITY: Token = Token(PTB + 0x20);

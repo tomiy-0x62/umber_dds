@@ -16,12 +16,20 @@ pub(crate) enum AddChangeErr {
 }
 
 #[derive(PartialEq, Eq, Clone)]
+pub enum DataKind {
+    Data,
+    Key,
+    Empty,
+}
+
+#[derive(PartialEq, Eq, Clone)]
 pub struct CacheChange {
     kind: ChangeKind,
     pub writer_guid: GUID,
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
+    pub data_kind: DataKind,
     pub inline_qos: Option<ParameterList>,
     // In DDS, the value of the fields
     // labeled as ‘key’ within the data
@@ -38,6 +46,7 @@ impl CacheChange {
         sequence_number: SequenceNumber,
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
+        data_kind: DataKind,
         inline_qos: Option<ParameterList>,
         instance_handle: InstanceHandle,
     ) -> Self {
@@ -47,6 +56,7 @@ impl CacheChange {
             sequence_number,
             timestamp,
             data_value,
+            data_kind,
             inline_qos,
             instance_handle,
             is_read: false,
@@ -65,6 +75,7 @@ pub struct CacheChangeIng {
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
+    data_kind: DataKind,
     inline_qos: Option<ParameterList>,
     pub key_hash: Option<KeyHash>,
 }
@@ -76,6 +87,7 @@ impl CacheChangeIng {
         sequence_number: SequenceNumber,
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
+        data_kind: DataKind,
         inline_qos: Option<ParameterList>,
         key_hash: Option<KeyHash>,
     ) -> Self {
@@ -85,6 +97,7 @@ impl CacheChangeIng {
             sequence_number,
             timestamp,
             data_value,
+            data_kind,
             inline_qos,
             key_hash,
         }
@@ -99,6 +112,7 @@ impl CacheChangeIng {
             self.sequence_number,
             self.timestamp,
             self.data_value,
+            self.data_kind,
             self.inline_qos,
             instance_handle,
         )

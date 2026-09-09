@@ -18,7 +18,8 @@ use crate::message::{
 };
 use crate::network::udp_sender::UdpSender;
 use crate::rtps::cache::{
-    CacheChange, ChangeForReaderStatusKind, ChangeKind, HCKey, HistoryCache, HistoryCacheType,
+    CacheChange, ChangeForReaderStatusKind, ChangeKind, DataKind, HCKey, HistoryCache,
+    HistoryCacheType, InstanceHandle,
 };
 use crate::rtps::reader_locator::ReaderLocator;
 use crate::structure::{
@@ -369,7 +370,7 @@ impl Writer {
                         {
                             Some(kh)
                         } else {
-                            unreachable!();
+                            None
                         }
                     } else {
                         None
@@ -445,6 +446,7 @@ impl Writer {
             SequenceNumber(1),
             time_stamp,
             Some(builtin_data),
+            DataKind::Data,
             None,
             ih,
         );

@@ -560,7 +560,7 @@ impl EventLoop {
                                         w.check_liveliness();
                                     }
                                 }
-                                let duration = self.check_liveliness_timer_to.unwrap().0;
+                                let duration = self.check_liveliness_timer_to.as_ref().unwrap().0;
                                 let to = self.check_liveliness_timer.set_timeout(duration, wgs);
                                 self.check_liveliness_timer_to = Some((duration, to));
                                 trace!(

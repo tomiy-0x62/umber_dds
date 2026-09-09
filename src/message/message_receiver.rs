@@ -16,7 +16,7 @@ use crate::message::{
     *,
 };
 use crate::net_util::*;
-use crate::rtps::cache::{HistoryCache, HistoryCacheType};
+use crate::rtps::cache::{DataKind, HistoryCache, HistoryCacheType};
 use crate::rtps::{
     cache::{CacheChangeIng, ChangeKind},
     reader::{ReaderTimer, RtpsReader},
@@ -53,24 +53,24 @@ impl error::Error for MessageError {
     }
 }
 
-struct DataKey {
-    pub _participant_guid: Option<GUID>,
+pub struct DataKey {
+    pub participant_guid: Option<GUID>,
     pub endpoint_guid: Option<GUID>,
 }
 impl DataKey {
     pub fn empty() -> Self {
         Self {
-            _participant_guid: None,
+            participant_guid: None,
             endpoint_guid: None,
         }
     }
     pub fn from_parameter_list(param_list: &ParameterList) -> Result<Self, MessageError> {
-        let mut _participant_guid = None;
+        let mut participant_guid = None;
         let mut endpoint_guid = None;
         for parameter in &param_list.parameters {
             match parameter.parameter_id {
                 ParameterId::PID_PARTICIPANT_GUID => {
-                    _participant_guid = Some(
+                    participant_guid = Some(
                         GUID::read_from_buffer_with_ctx(Endianness::LittleEndian, &parameter.value)
                             .map_err(|e| {
                                 MessageError::Error(format!(
@@ -103,9 +103,27 @@ impl DataKey {
             }
         }
         Ok(Self {
-            _participant_guid,
+            participant_guid,
             endpoint_guid,
         })
+    }
+}
+
+impl<C: speedy::Context> speedy::Writable<C> for DataKey {
+    fn write_to<T: ?Sized + speedy::Writer<C>>(&self, writer: &mut T) -> Result<(), C::Error> {
+        if let Some(participant_guid) = self.participant_guid {
+            writer.write_u16(ParameterId::PID_PARTICIPANT_GUID.value)?;
+            writer.write_u16(16)?;
+            writer.write_value(&participant_guid)?;
+        }
+        if let Some(endpoint_guid) = self.endpoint_guid {
+            writer.write_u16(ParameterId::PID_ENDPOINT_GUID.value)?;
+            writer.write_u16(16)?;
+            writer.write_value(&endpoint_guid)?;
+        }
+        writer.write_u16(ParameterId::PID_SENTINEL.value)?;
+        writer.write_u16(0)?; // padding
+        Ok(())
     }
 }
 
@@ -497,12 +515,20 @@ impl MessageReceiver {
         let key_hash = inline_qos.key_hash;
 
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
+        let data_kind = if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
+            DataKind::Data
+        } else if !flag.contains(DataFlag::Data) && flag.contains(DataFlag::Key) {
+            DataKind::Key
+        } else {
+            DataKind::Empty
+        };
         let change = CacheChangeIng::new(
             ChangeKind::Alive,
             writer_guid,
             data.writer_sn,
             ts,
             data.serialized_payload.clone(),
+            data_kind,
             data.inline_qos.clone(),
             key_hash,
         );

@@ -33,6 +33,7 @@ impl Subscriber {
         qos: SubscriberQosPolicies,
         dp: DomainParticipant,
         create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
+        drop_entity_sender: mio_channel::Sender<GUID>,
     ) -> Self {
         Self {
             inner: Arc::new(RwLock::new(InnerSubscriber::new(
@@ -40,6 +41,7 @@ impl Subscriber {
                 qos,
                 dp,
                 create_reader_sender,
+                drop_entity_sender,
             ))),
         }
     }
@@ -143,6 +145,7 @@ pub struct InnerSubscriber {
     default_dr_qos: DataReaderQosPolicies,
     dp: DomainParticipant,
     create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
+    drop_entity_sender: mio_channel::Sender<GUID>,
 }
 
 impl InnerSubscriber {
@@ -151,6 +154,7 @@ impl InnerSubscriber {
         qos: SubscriberQosPolicies,
         dp: DomainParticipant,
         create_reader_sender: mio_channel::SyncSender<Box<dyn ReaderIngredientsType>>,
+        drop_entity_sender: mio_channel::Sender<GUID>,
     ) -> Self {
         info!("created new Subscriber {}", guid);
         let default_dr_qos = DataReaderQosBuilder::new().build();
@@ -161,6 +165,7 @@ impl InnerSubscriber {
             default_dr_qos,
             dp,
             create_reader_sender,
+            drop_entity_sender,
         }
     }
 
@@ -267,6 +272,7 @@ impl InnerSubscriber {
                 subscriber,
                 history_cache,
                 reader_state_receiver,
+                self.drop_entity_sender.clone(),
             ),
             Box::new(reader_ing),
         )

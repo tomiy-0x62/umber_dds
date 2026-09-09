@@ -29,6 +29,7 @@ pub struct DataReader<R: for<'a> Readable<'a, Endianness> + DdsData> {
     _subscriber: Subscriber,
     rhc: Arc<RwLock<HistoryCache>>,
     reader_state_receiver: mio_channel::Receiver<DataReaderStatusChanged>,
+    drop_entity_sender: mio_channel::Sender<GUID>,
 }
 
 impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
@@ -39,6 +40,7 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
         subscriber: Subscriber,
         rhc: Arc<RwLock<HistoryCache>>,
         reader_state_receiver: mio_channel::Receiver<DataReaderStatusChanged>,
+        drop_entity_sender: mio_channel::Sender<GUID>,
     ) -> Self {
         if reader_guid.entity_id.is_builtin() {
             info!(
@@ -61,7 +63,14 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
             _subscriber: subscriber,
             rhc,
             reader_state_receiver,
+            drop_entity_sender,
         }
+    }
+
+    pub fn stop(&self) {
+        self.drop_entity_sender
+            .send(self._reader_guid)
+            .expect("failed send drop_entity_sender");
     }
 
     /// get available data received from DataWriter

@@ -11,7 +11,7 @@ use super::{
     Header, Message,
 };
 use crate::dds::key::KeyHash;
-use crate::rtps::cache::CacheChange;
+use crate::rtps::cache::{CacheChange, DataKind};
 use crate::structure::{EntityId, GuidPrefix, ParameterId};
 use speedy::Endianness;
 
@@ -150,8 +150,17 @@ impl MessageBuilder {
         let payload_length;
         let serialized_payload = cache_change.data_value();
         if let Some(payload) = serialized_payload {
-            data_flag |= DataFlag::Data;
-            payload_length = 4 + payload.value.len();
+            match cache_change.data_kind {
+                DataKind::Data => {
+                    payload_length = 4 + payload.value.len();
+                    data_flag |= DataFlag::Data;
+                }
+                DataKind::Key => {
+                    payload_length = 4 + payload.value.len();
+                    data_flag |= DataFlag::Key;
+                }
+                DataKind::Empty => payload_length = 0,
+            }
         } else {
             payload_length = 0;
         }
@@ -164,14 +173,25 @@ impl MessageBuilder {
             let kh_param = Parameter::new(ParameterId::PID_KEY_HASH, kh.to_vec_u8());
             inline_qos_params.add_parameter(kh_param);
             inline_qos_len += 20;
-            inline_qos_len += 4; // sentinel
         }
-        if let Some(_iq) = cache_change.inline_qos.as_ref() {
+        if let Some(iq) = cache_change.inline_qos.as_ref() {
             data_flag |= DataFlag::InlineQos;
-            // have_inline_qos = true;
-            todo!();
+            have_inline_qos = true;
+            for param in &iq.parameters {
+                match param.parameter_id {
+                    ParameterId::PID_STATUS_INFO => {
+                        inline_qos_params.add_parameter(param.clone());
+                        inline_qos_len += 8;
+                    }
+                    pid => panic!(
+                        "MessageBuilder receive unkown inlineQos whose pid is {:02x}",
+                        pid.value
+                    ),
+                }
+            }
         }
         let inline_qos = if have_inline_qos {
+            inline_qos_len += 4; // sentinel
             Some(inline_qos_params)
         } else {
             None

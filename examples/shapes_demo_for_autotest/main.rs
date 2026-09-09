@@ -42,7 +42,7 @@ enum Entity {
     Datawriter(DataWriter<Shape>),
 }
 
-fn main() {
+fn main() -> Result<(), String> {
     println!("--- shapes_demo_for_autotest start");
     let stdout = ConsoleAppender::builder()
         .encoder(Box::new(PatternEncoder::new(
@@ -200,7 +200,8 @@ fn main() {
     if datawriter.is_some() {
         write_timer.set_timeout(Duration::new(2, 0), ());
     }
-    loop {
+    let mut is_success = true;
+    'dds_loop: loop {
         let mut events = Events::with_capacity(128);
         poll.poll(&mut events, None).unwrap();
         for event in events.iter() {
@@ -208,9 +209,12 @@ fn main() {
                 END_TIMER => {
                     println!("--- shapes_demo_for_autotest end");
                     if datareader.is_some() {
-                        std::process::exit(-1);
+                        is_success = false;
+                        break 'dds_loop;
                     } else {
-                        std::process::exit(0);
+                        is_success = true;
+                        datawriter.unwrap().stop();
+                        break 'dds_loop;
                     }
                 }
                 WRITE_TIMER => {
@@ -234,7 +238,8 @@ fn main() {
                                     }
                                     if received > 5 {
                                         println!("--- shapes_demo_for_autotest end");
-                                        std::process::exit(0);
+                                        dr.stop();
+                                        break 'dds_loop;
                                     }
                                 }
                                 DataReaderStatusChanged::SubscriptionMatched(state) => {
@@ -268,5 +273,10 @@ fn main() {
                 _ => unreachable!(),
             }
         }
+    }
+    if is_success {
+        Ok(())
+    } else {
+        Err("failed".to_string())
     }
 }

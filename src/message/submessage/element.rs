@@ -258,6 +258,18 @@ impl InlineQos {
             key_hash,
         })
     }
+    pub fn as_parameter_list(&self) -> ParameterList {
+        let mut param_list = ParameterList::new();
+        if let Some(si) = self.status_info {
+            let param = Parameter::new(ParameterId::PID_STATUS_INFO, vec![0, 0, 0, si.bits()]);
+            param_list.add_parameter(param);
+        }
+        if let Some(kh) = self.key_hash {
+            let param = Parameter::new(ParameterId::PID_KEY_HASH, kh.to_vec_u8());
+            param_list.add_parameter(param);
+        }
+        param_list
+    }
 }
 
 #[derive(PartialEq, Eq, Clone)]

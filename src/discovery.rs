@@ -14,7 +14,7 @@ use crate::discovery::structure::data::{
 };
 use crate::message::submessage::element::{SerializedPayload, Timestamp};
 use crate::rtps::{reader::ReaderIngredients, writer::WriterIngredients};
-use crate::structure::{EntityId, GuidPrefix, TopicKind};
+use crate::structure::{EntityId, GuidPrefix, TopicKind, GUID};
 use alloc::collections::BTreeMap;
 use core::time::Duration as CoreDuration;
 use log::{debug, info, trace};
@@ -247,6 +247,7 @@ pub struct Discovery {
     subscriber: Subscriber,
     self_spdp_data: SerializedPayload,
     self_spdp_data_kh: Option<KeyHash>,
+    drop_entity_receiver: mio_channel::Receiver<GUID>,
     spdp_builtin_participant_writer: DataWriter<SPDPdiscoveredParticipantData>,
     // Since the processing of incoming SPDP message is fully handled within the MessageReceiver.
     // The SPDPbuiltinParticipantReader is no longer necessary.
@@ -274,12 +275,21 @@ impl Discovery {
         discovery_db: DiscoveryDB,
         self_spdp_data: SerializedPayload,
         self_spdp_data_kh: Option<KeyHash>,
+        drop_entity_receiver: mio_channel::Receiver<GUID>,
         discdb_update_sender: mio_channel::Sender<DiscoveryDBUpdateNotifier>,
         notify_new_writer_receiver: mio_channel::Receiver<(EntityId, DiscoveredWriterData)>,
         notify_new_reader_receiver: mio_channel::Receiver<(EntityId, DiscoveredReaderData)>,
         participant_msg_cmd_reveiver: mio_channel::Receiver<ParticipantMessageCmd>,
     ) -> Self {
         let poll = Poll::new().unwrap();
+
+        poll.register(
+            &drop_entity_receiver,
+            DROP_ENTITY,
+            Ready::readable(),
+            PollOpt::edge(),
+        )
+        .expect("failed to register DataReader 'drop_entity_receiver' with poll");
 
         poll.register(
             &builtin_endpoints.p2p_builtin_participant_msg_reader,
@@ -337,6 +347,7 @@ impl Discovery {
             subscriber: builtin_endpoints.subscriber,
             self_spdp_data,
             self_spdp_data_kh,
+            drop_entity_receiver,
             spdp_builtin_participant_writer: builtin_endpoints.spdp_builtin_participant_writer,
             // spdp_builtin_participant_reader: builtin_endpoints.spdp_builtin_participant_reader,
             sedp_builtin_pub_writer: builtin_endpoints.sedp_builtin_pub_writer,
@@ -421,6 +432,23 @@ impl Discovery {
                                 );
                             }
                         }
+                        DROP_ENTITY => {
+                            while let Ok(guid) = self.drop_entity_receiver.try_recv() {
+                                if guid.entity_id.is_reader() {
+                                    info!("drop Reader received\n\tReader: {} ", guid);
+                                    self.sedp_builtin_sub_writer.write_data_ud(guid);
+                                    self.local_readers_data.remove(&guid.entity_id);
+                                } else if guid.entity_id.is_writer() {
+                                    info!("drop Writer received\n\tWriter: {} ", guid);
+                                    self.sedp_builtin_pub_writer.write_data_ud(guid);
+                                    self.local_writers_data.remove(&guid.entity_id);
+                                } else if guid.entity_id == EntityId::PARTICIPANT {
+                                    todo!();
+                                } else {
+                                    unreachable!();
+                                }
+                            }
+                        }
                         Token(n) => {
                             unimplemented!("@discovery: Token(0x{:02X}) is not implemented", n)
                         }
@@ -431,7 +459,10 @@ impl Discovery {
                         } else if eid.is_writer() {
                             unimplemented!();
                         } else {
-                            unreachable!();
+                            unreachable!(
+                                "poll on Discovery received unknown token, TokenDec::Entity({})",
+                                eid
+                            );
                         }
                     }
                 }
