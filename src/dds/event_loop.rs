@@ -67,6 +67,7 @@ pub struct EventLoop {
     // receive discovery_db update notification from Discovery
     discdb_update_receiver: mio_channel::Receiver<DiscoveryDBUpdateNotifier>,
     discovery_db: DiscoveryDB,
+    event_loop_stop_receiver: mio_channel::Receiver<()>,
 }
 
 impl EventLoop {
@@ -86,6 +87,7 @@ impl EventLoop {
         spdp_data: SerializedPayload,
         spdp_data_kh: Option<KeyHash>,
         builtin_endpoints_ingredients: BuiltinEndpointsIngredients,
+        event_loop_stop_receiver: mio_channel::Receiver<()>,
     ) -> Self {
         let poll = Poll::new().unwrap();
         for (token, lister) in &mut sockets {
@@ -198,6 +200,13 @@ impl EventLoop {
             PollOpt::edge(),
         )
         .expect("failed to register timer 'wlp_timer' with poll");
+        poll.register(
+            &event_loop_stop_receiver,
+            STOP_EVENT_LOOP,
+            Ready::readable(),
+            PollOpt::edge(),
+        )
+        .expect("failed to register timer 'event_loop_stop_receiver' with poll");
         let message_receiver = MessageReceiver::new(
             participant_guidprefix,
             domain_id,
@@ -235,6 +244,7 @@ impl EventLoop {
             check_liveliness_timer_to: None,
             discdb_update_receiver,
             discovery_db,
+            event_loop_stop_receiver,
         };
         ev_loop.register_builtin_endpoints(builtin_endpoints_ingredients);
         ev_loop
@@ -363,7 +373,7 @@ impl EventLoop {
 
     pub fn event_loop(mut self) {
         let mut events = Events::with_capacity(1024);
-        loop {
+        'ev_loop: loop {
             self.poll.poll(&mut events, None).unwrap();
             for event in events.iter() {
                 match TokenDec::decode(event.token()) {
@@ -607,6 +617,15 @@ impl EventLoop {
                                 } else {
                                     error!("not found Reader which attempt to set WriterLivelinessTimer\n\tReader: {}", reader_eid);
                                 }
+                            }
+                        }
+                        STOP_EVENT_LOOP => {
+                            if let Ok(()) = self.event_loop_stop_receiver.try_recv() {
+                                break 'ev_loop;
+                            } else {
+                                unreachable!(
+                                    "fire STOP_EVENT_LOOP but event_loop_stop_receiver is empty"
+                                );
                             }
                         }
                         Token(n) => error!("@event_loop: Token(0x{:02X}) is not implemented", n),

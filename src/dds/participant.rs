@@ -39,7 +39,7 @@ use core::net::Ipv4Addr;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration as CoreDuration;
 use enumflags2::make_bitflags;
-use log::info;
+use log::{info, trace};
 use mio_extras::channel as mio_channel;
 use mio_v06::net::UdpSocket;
 use rand::rngs::SmallRng;
@@ -53,6 +53,7 @@ use awkernel_sync::{mcs::MCSNode, mutex::Mutex};
 #[derive(Clone)]
 pub struct DomainParticipant {
     inner: Arc<Mutex<DomainParticipantInner>>,
+    event_loop_stop_sender: mio_channel::SyncSender<()>,
 }
 
 impl RTPSEntity for DomainParticipant {
@@ -117,6 +118,7 @@ impl DomainParticipant {
         };
 
         let (drop_entity_sender, drop_entity_receiver) = mio_channel::channel();
+        let (event_loop_stop_sender, event_loop_stop_receiver) = mio_channel::sync_channel(1);
 
         let (dp_inner, ev_loop_ing) = DomainParticipantInner::new(
             domain_id,
@@ -128,6 +130,7 @@ impl DomainParticipant {
         );
         let dp = Self {
             inner: Arc::new(Mutex::new(dp_inner)),
+            event_loop_stop_sender,
         };
         let (be, be_ing) = create_builtin_endpoints(&dp);
         let mut node = MCSNode::new();
@@ -156,6 +159,7 @@ impl DomainParticipant {
                     serialized_spdp_data_clone,
                     spdp_data_kh,
                     be_ing,
+                    event_loop_stop_receiver,
                 );
                 ev_loop.event_loop();
             })
@@ -188,6 +192,36 @@ impl DomainParticipant {
 
         info!("created new Participant {}", dp.guid());
         dp
+    }
+    pub fn stop(self) {
+        let (drop_entity_sender, my_guid, ev_loop_handler, discovery_handler) = {
+            let mut node = MCSNode::new();
+            let mut lock = self.inner.lock(&mut node);
+            (
+                lock.drop_entity_sender.clone(),
+                lock.my_guid,
+                lock.ev_loop_handler.take(),
+                lock.discovery_handler.take(),
+            )
+        };
+
+        drop_entity_sender
+            .send(my_guid)
+            .expect("failed send drop_entity_sender");
+        std::thread::sleep(CoreDuration::from_millis(1000));
+        self.event_loop_stop_sender
+            .send(())
+            .expect("failed send event_loop_stop_sender");
+        ev_loop_handler
+            .expect("failed get ev_loop_handler")
+            .join()
+            .unwrap();
+        trace!("EventLoop thread joined");
+        discovery_handler
+            .expect("failed get discovery_handler")
+            .join()
+            .unwrap();
+        trace!("Discovery thread joined");
     }
     pub fn create_publisher(&self, qos: PublisherQos) -> Publisher {
         let mut node = MCSNode::new();
@@ -539,17 +573,6 @@ impl DomainParticipantInner {
     }
     pub fn set_default_topic_qos(&mut self, qos: TopicQosPolicies) {
         self.default_topic_qos = qos;
-    }
-}
-
-impl Drop for DomainParticipantInner {
-    fn drop(&mut self) {
-        if let Some(handler) = self.ev_loop_handler.take() {
-            handler.join().unwrap();
-        }
-        if let Some(handler) = self.discovery_handler.take() {
-            handler.join().unwrap();
-        }
     }
 }
 

@@ -18,7 +18,10 @@ use crate::structure::{EntityId, GuidPrefix, TopicKind, GUID};
 use alloc::collections::BTreeMap;
 use core::time::Duration as CoreDuration;
 use log::{debug, info, trace};
-use mio_extras::{channel as mio_channel, timer::Timer};
+use mio_extras::{
+    channel as mio_channel,
+    timer::{Timeout, Timer},
+};
 use mio_v06::{Events, Poll, PollOpt, Ready, Token};
 
 pub mod discovery_db;
@@ -259,7 +262,9 @@ pub struct Discovery {
     p2p_builtin_participant_msg_writer: DataWriter<ParticipantMessageData>,
     p2p_builtin_participant_msg_reader: DataReader<ParticipantMessageData>,
     spdp_send_timer: Timer<()>,
+    spdp_send_timer_timeout: Timeout,
     participant_liveliness_timer: Timer<()>,
+    participant_liveliness_timer_timeout: Timeout,
     local_writers_data: BTreeMap<EntityId, DiscoveredWriterData>,
     notify_new_writer_receiver: mio_channel::Receiver<(EntityId, DiscoveredWriterData)>,
     local_readers_data: BTreeMap<EntityId, DiscoveredReaderData>,
@@ -300,7 +305,7 @@ impl Discovery {
         .expect("failed to register DataReader 'p2p_builtin_participant_msg_reader' with poll");
 
         let mut spdp_send_timer: Timer<()> = Timer::default();
-        spdp_send_timer.set_timeout(CoreDuration::new(3, 0), ());
+        let spdp_to = spdp_send_timer.set_timeout(CoreDuration::new(3, 0), ());
         poll.register(
             &spdp_send_timer,
             SPDP_SEND_TIMER,
@@ -309,7 +314,7 @@ impl Discovery {
         )
         .expect("failed to register timer 'spdp_send_timer' with poll");
         let mut participant_liveliness_timer: Timer<()> = Timer::default();
-        participant_liveliness_timer.set_timeout(CoreDuration::new(5, 0), ());
+        let pl_to = participant_liveliness_timer.set_timeout(CoreDuration::new(5, 0), ());
         poll.register(
             &participant_liveliness_timer,
             PARTICIPANT_LIVELINESS_TIMER,
@@ -359,7 +364,9 @@ impl Discovery {
             p2p_builtin_participant_msg_reader: builtin_endpoints
                 .p2p_builtin_participant_msg_reader,
             spdp_send_timer,
+            spdp_send_timer_timeout: spdp_to,
             participant_liveliness_timer,
+            participant_liveliness_timer_timeout: pl_to,
             local_writers_data: BTreeMap::new(),
             notify_new_writer_receiver,
             local_readers_data: BTreeMap::new(),
@@ -370,7 +377,7 @@ impl Discovery {
 
     pub fn discovery_loop(&mut self) {
         let mut events = Events::with_capacity(1024);
-        loop {
+        'disc_loop: loop {
             self.poll.poll(&mut events, None).unwrap();
             for event in events.iter() {
                 match TokenDec::decode(event.token()) {
@@ -383,7 +390,8 @@ impl Discovery {
                                     self.self_spdp_data_kh,
                                     false,
                                 );
-                            self.spdp_send_timer
+                            self.spdp_send_timer_timeout = self
+                                .spdp_send_timer
                                 .set_timeout(self.dp.get_config().participant_message_period, ());
                         }
                         PARTICIPANT_MESSAGE_CMD_RECEIVER => {
@@ -409,7 +417,8 @@ impl Discovery {
                                     );
                                 info!("Liveliness of Participant Lost\n\tParticipant: {}", l);
                             }
-                            self.participant_liveliness_timer
+                            self.participant_liveliness_timer_timeout = self
+                                .participant_liveliness_timer
                                 .set_timeout(next_duration, ());
                         }
                         DISC_WRITER_ADD => {
@@ -435,15 +444,24 @@ impl Discovery {
                         DROP_ENTITY => {
                             while let Ok(guid) = self.drop_entity_receiver.try_recv() {
                                 if guid.entity_id.is_reader() {
-                                    info!("drop Reader received\n\tReader: {} ", guid);
+                                    debug!("drop Reader received\n\tReader: {} ", guid);
                                     self.sedp_builtin_sub_writer.write_data_ud(guid);
                                     self.local_readers_data.remove(&guid.entity_id);
                                 } else if guid.entity_id.is_writer() {
-                                    info!("drop Writer received\n\tWriter: {} ", guid);
+                                    debug!("drop Writer received\n\tWriter: {} ", guid);
                                     self.sedp_builtin_pub_writer.write_data_ud(guid);
                                     self.local_writers_data.remove(&guid.entity_id);
                                 } else if guid.entity_id == EntityId::PARTICIPANT {
-                                    todo!();
+                                    debug!("drop Participant received\n\tParticipant: {} ", guid);
+                                    // stop SPDP_SEND_TIMER
+                                    self.spdp_send_timer
+                                        .cancel_timeout(&self.spdp_send_timer_timeout);
+                                    // stop PARTICIPANT_LIVELINESS_TIMER
+                                    self.participant_liveliness_timer
+                                        .cancel_timeout(&self.participant_liveliness_timer_timeout);
+                                    self.spdp_builtin_participant_writer.write_data_ud(guid);
+                                    debug!("received Participant drop, Discovery stop");
+                                    break 'disc_loop;
                                 } else {
                                     unreachable!();
                                 }
