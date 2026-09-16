@@ -109,6 +109,18 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         self.writer_data_to_hc(ts, serialized_payload, DataKind::Data, key_hash, true, None);
     }
 
+    pub fn unregister_instance(&self, handle: InstanceHandle) {
+        self.writer_command_sender
+            .send(WriterCmd::SendUnregisterMessage(handle))
+            .expect("failed to send WriterCmd via channel 'writer_command_sender'");
+    }
+
+    pub fn dispose(&self, handle: InstanceHandle) {
+        self.writer_command_sender
+            .send(WriterCmd::SendDisposeMessage(handle))
+            .expect("failed to send WriterCmd via channel 'writer_command_sender'");
+    }
+
     /// + inc_seq_num: whether the seq_num needs to be incremented.
     pub(crate) fn write_builtin_data(&mut self, data: &W, inc_seq_num: bool) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
