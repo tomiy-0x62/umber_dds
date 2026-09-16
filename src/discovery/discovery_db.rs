@@ -45,6 +45,12 @@ impl DiscoveryDB {
         inner.write_participant(guid_prefix, timestamp, data)
     }
 
+    pub fn remove_participant(&mut self, guid_prefix: GuidPrefix) -> bool {
+        let mut node = MCSNode::new();
+        let mut inner = self.inner.lock(&mut node);
+        inner.remove_participant(guid_prefix)
+    }
+
     pub fn check_participant_liveliness(
         &mut self,
         timestamp: Timestamp,
@@ -195,6 +201,10 @@ impl DiscoveryDBInner {
                 true
             }
         }
+    }
+
+    fn remove_participant(&mut self, guid_prefix: GuidPrefix) -> bool {
+        self.participant_data.remove(&guid_prefix).is_some()
     }
 
     pub fn check_participant_liveliness(

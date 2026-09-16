@@ -27,7 +27,7 @@ use alloc::collections::BTreeMap;
 use alloc::fmt;
 use alloc::sync::Arc;
 use awkernel_sync::rwlock::RwLock;
-use log::{error, info, trace, warn};
+use log::{debug, error, info, trace, warn};
 use mio_extras::channel as mio_channel;
 use speedy::Endianness;
 use std::error;
@@ -537,7 +537,15 @@ impl MessageReceiver {
             || data.reader_id == EntityId::SPDP_BUILTIN_PARTICIPANT_DETECTOR
         {
             // if msg is for SPDP
-            self.handle_spdp_data(data, change, writers, readers)?;
+            self.handle_spdp_data(
+                data,
+                flag.contains(DataFlag::Data),
+                change,
+                inline_qos,
+                data_key,
+                writers,
+                readers,
+            )?;
         } else if data.writer_id == EntityId::SEDP_BUILTIN_PUBLICATIONS_ANNOUNCER
             || data.reader_id == EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR
         {
@@ -812,10 +820,56 @@ impl MessageReceiver {
     fn handle_spdp_data(
         &mut self,
         data: Data,
+        have_data: bool,
         _change: CacheChangeIng,
+        inline_qos: InlineQos,
+        data_key: DataKey,
         writers: &mut BTreeMap<EntityId, Writer>,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
+        if let Some(status_info) = inline_qos.status_info {
+            if status_info.contains(StatusInfoFlag::Disposed)
+                && status_info.contains(StatusInfoFlag::Unregistered)
+            {
+                let target_guid = if let Some(pg) = data_key.participant_guid {
+                    pg
+                } else {
+                    if let Some(kh) = inline_qos.key_hash {
+                        GUID::from_bits(kh.to_bits())
+                    } else {
+                        warn!("DATA(p[UD]) received, but target GUID is not specified");
+                        return Ok(());
+                    }
+                };
+                let removed = self.disc_db.remove_participant(target_guid.guid_prefix);
+                if removed {
+                    debug!("DATA(p[UD]) received, remove target Participant");
+                    let mut found = false;
+                    for r in readers.values_mut() {
+                        found = true;
+                        r.delete_writer_proxy(target_guid.guid_prefix)
+                    }
+                    for w in writers.values_mut() {
+                        found = true;
+                        w.delete_reader_proxy(target_guid.guid_prefix)
+                    }
+                    if !found {
+                        warn!(
+                            "DATA(p[UD]) received, but not found builtin_endpoint of its Participant. GUID: {}",
+                            target_guid
+                        );
+                    }
+                } else {
+                    warn!(
+                        "DATA(p[UD]) received, but not found Participant. GUID: {}",
+                        target_guid
+                    );
+                }
+            }
+        }
+        if !have_data {
+            return Ok(());
+        }
         let mut deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
             let bytes = sp.to_bytes();
             let encapsulation_kind = RepresentationIdentifier::new([bytes[0], bytes[1]]);
