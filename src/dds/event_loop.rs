@@ -67,6 +67,7 @@ pub struct EventLoop {
     // receive discovery_db update notification from Discovery
     discdb_update_receiver: mio_channel::Receiver<DiscoveryDBUpdateNotifier>,
     discovery_db: DiscoveryDB,
+    stop_ready: bool,
     event_loop_stop_receiver: mio_channel::Receiver<()>,
 }
 
@@ -244,6 +245,7 @@ impl EventLoop {
             check_liveliness_timer_to: None,
             discdb_update_receiver,
             discovery_db,
+            stop_ready: false,
             event_loop_stop_receiver,
         };
         ev_loop.register_builtin_endpoints(builtin_endpoints_ingredients);
@@ -620,8 +622,22 @@ impl EventLoop {
                             }
                         }
                         STOP_EVENT_LOOP => {
+                            // The `EventLoop` waits for two `event_loop_stop` signals (from both `Participant` and `Discovery`)
+                            // before terminating.
+                            //
+                            // During shutdown, the `Participant` simultaneously signals the `EventLoop` to stop and instructs
+                            // `Discovery` to send a final `DATA(p[UD])` message. `Discovery` then instructs the `DataWriter`
+                            // to send this message to the `Writer` (on the EventLoop thread) via a channel.
+                            //
+                            // Waiting for both signals ensures the `EventLoop` stays alive long enough to process this final
+                            // message. If it stopped after the first signal, the channel would close prematurely, causing a
+                            // panic when the `DataWriter` attempts to send the data.
                             if let Ok(()) = self.event_loop_stop_receiver.try_recv() {
-                                break 'ev_loop;
+                                if self.stop_ready {
+                                    break 'ev_loop;
+                                } else {
+                                    self.stop_ready = true;
+                                }
                             } else {
                                 unreachable!(
                                     "fire STOP_EVENT_LOOP but event_loop_stop_receiver is empty"

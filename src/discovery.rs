@@ -270,6 +270,7 @@ pub struct Discovery {
     local_readers_data: BTreeMap<EntityId, DiscoveredReaderData>,
     notify_new_reader_receiver: mio_channel::Receiver<(EntityId, DiscoveredReaderData)>,
     participant_msg_cmd_reveiver: mio_channel::Receiver<ParticipantMessageCmd>,
+    event_loop_stop_sender: mio_channel::SyncSender<()>,
 }
 
 impl Discovery {
@@ -285,6 +286,7 @@ impl Discovery {
         notify_new_writer_receiver: mio_channel::Receiver<(EntityId, DiscoveredWriterData)>,
         notify_new_reader_receiver: mio_channel::Receiver<(EntityId, DiscoveredReaderData)>,
         participant_msg_cmd_reveiver: mio_channel::Receiver<ParticipantMessageCmd>,
+        event_loop_stop_sender: mio_channel::SyncSender<()>,
     ) -> Self {
         let poll = Poll::new().unwrap();
 
@@ -372,6 +374,7 @@ impl Discovery {
             local_readers_data: BTreeMap::new(),
             notify_new_reader_receiver,
             participant_msg_cmd_reveiver,
+            event_loop_stop_sender,
         }
     }
 
@@ -460,6 +463,9 @@ impl Discovery {
                                     self.participant_liveliness_timer
                                         .cancel_timeout(&self.participant_liveliness_timer_timeout);
                                     self.spdp_builtin_participant_writer.write_data_ud(guid);
+                                    self.event_loop_stop_sender
+                                        .send(())
+                                        .expect("failed send event_loop_stop_sender");
                                     debug!("received Participant drop, Discovery stop");
                                     break 'disc_loop;
                                 } else {

@@ -130,7 +130,7 @@ impl DomainParticipant {
         );
         let dp = Self {
             inner: Arc::new(Mutex::new(dp_inner)),
-            event_loop_stop_sender,
+            event_loop_stop_sender: event_loop_stop_sender.clone(),
         };
         let (be, be_ing) = create_builtin_endpoints(&dp);
         let mut node = MCSNode::new();
@@ -183,6 +183,7 @@ impl DomainParticipant {
                     notify_new_writer_receiver,
                     notify_new_reader_receiver,
                     participant_msg_cmd_receiver,
+                    event_loop_stop_sender,
                 );
                 discovery.discovery_loop();
             })
@@ -208,7 +209,6 @@ impl DomainParticipant {
         drop_entity_sender
             .send(my_guid)
             .expect("failed send drop_entity_sender");
-        std::thread::sleep(CoreDuration::from_millis(1000));
         self.event_loop_stop_sender
             .send(())
             .expect("failed send event_loop_stop_sender");
