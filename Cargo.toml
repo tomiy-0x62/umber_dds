@@ -43,6 +43,7 @@ bimap = { version = "0.6", default-features = false }
 clap = { version = "4.5", features = ["derive"] }
 clap_derive = "4.5"
 log4rs = "1.3.0"
+ctrlc = "3.5.2"
 
 [features]
 default = ["std"]

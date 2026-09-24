@@ -10,11 +10,13 @@
 //! rand = { version = "0.8" }
 //! mio_v06 = { package = "mio", version = "0.6.23" }
 //! mio-extras = "2.0.6"
+//! ctrlc = "3.5.2"
 //! ```
 //!
 //! publish sample
 //! ```no_run
-//! use mio_extras::timer::Timer;
+//! use ctrlc;
+//! use mio_extras::{channel as mio_channel, timer::Timer};
 //! use mio_v06::{Events, Poll, PollOpt, Ready, Token};
 //! use rand::SeedableRng;
 //! use std::net::Ipv4Addr;
@@ -56,6 +58,7 @@
 //!
 //!     const WRITE_TIMER: Token = Token(0);
 //!     const DATA_WRITE: Token = Token(1);
+//!     const STOP: Token = Token(2);
 //!
 //!     let publisher = participant.create_publisher(PublisherQos::Default);
 //!     let dw_qos = DataWriterQosBuilder::new()
@@ -76,7 +79,19 @@
 //!     )
 //!     .unwrap();
 //!     write_timer.set_timeout(Duration::new(2, 0), ());
-//!     loop {
+//!
+//!     let (stop_sender, stop_receiver) = mio_channel::sync_channel::<()>(1);
+//!     ctrlc::set_handler(move || {
+//!         println!("SIGINT received");
+//!         stop_sender
+//!             .send(())
+//!             .expect("Could not send signal on channel.");
+//!     })
+//!     .expect("Error setting Ctrl-C handler");
+//!     poll.register(&stop_receiver, STOP, Ready::readable(), PollOpt::edge())
+//!         .unwrap();
+//!
+//!     'dds_loop: loop {
 //!         let mut events = Events::with_capacity(128);
 //!         poll.poll(&mut events, None).unwrap();
 //!         for event in events.iter() {
@@ -105,6 +120,9 @@
 //!                         }
 //!                     }
 //!                 }
+//!                 STOP => {
+//!                     break 'dds_loop;
+//!                 }
 //!                 _ => unreachable!(),
 //!             }
 //!         }
@@ -114,6 +132,8 @@
 //!
 //! subscribe sample
 //! ```no_run
+//! use ctrlc;
+//! use mio_extras::channel as mio_channel;
 //! use mio_v06::{Events, Poll, PollOpt, Ready, Token};
 //! use rand::SeedableRng;
 //! use std::net::Ipv4Addr;
@@ -154,6 +174,7 @@
 //!     let poll = Poll::new().unwrap();
 //!
 //!     const DATAREADER: Token = Token(0);
+//!     const STOP: Token = Token(1);
 //!     let subscriber = participant.create_subscriber(SubscriberQos::Default);
 //!     let dr_qos = DataReaderQosBuilder::new()
 //!         .reliability(policy::Reliability::default_reliable())
@@ -167,8 +188,20 @@
 //!         PollOpt::edge(),
 //!     )
 //!     .unwrap();
+//!
+//!     let (stop_sender, stop_receiver) = mio_channel::sync_channel::<()>(1);
+//!     ctrlc::set_handler(move || {
+//!         println!("SIGINT received");
+//!         stop_sender
+//!             .send(())
+//!             .expect("Could not send signal on channel.");
+//!     })
+//!     .expect("Error setting Ctrl-C handler");
+//!     poll.register(&stop_receiver, STOP, Ready::readable(), PollOpt::edge())
+//!         .unwrap();
+//!
 //!     let mut received = 0;
-//!     loop {
+//!     'dds_loop: loop {
 //!         let mut events = Events::with_capacity(128);
 //!         poll.poll(&mut events, None).unwrap();
 //!         for event in events.iter() {
@@ -181,14 +214,16 @@
 //!                                 for sample in received_samples {
 //!                                     received += 1;
 //!                                     let hello = sample.data();
-//!                                     println!(
-//!                                         "received: HelloWorld with index: {}, message \"{}\"",
-//!                                         hello.index, hello.message
-//!                                     );
+//!                                     if let Some(h) = hello {
+//!                                         println!(
+//!                                             "received: HelloWorld with index: {}, message \"{}\"",
+//!                                             h.index, h.message
+//!                                         );
+//!                                     }
 //!                                 }
 //!                                 if received >= 5 {
 //!                                     println!("received 5 messages. exit.");
-//!                                     std::process::exit(0);
+//!                                     break 'dds_loop;
 //!                                 }
 //!                             }
 //!                             DataReaderStatusChanged::SubscriptionMatched(state) => {
@@ -201,6 +236,9 @@
 //!                             _ => (),
 //!                         }
 //!                     }
+//!                 }
+//!                 STOP => {
+//!                     break 'dds_loop;
 //!                 }
 //!                 _ => unreachable!(),
 //!             }

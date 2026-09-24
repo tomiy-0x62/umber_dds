@@ -137,8 +137,10 @@ fn main() -> Result<(), String> {
                         policy::Reliability::default_besteffort()
                     })
                     .build();
-                let mut datawriter = publisher
-                    .create_datawriter::<Shape>(DataWriterQos::Policies(Box::new(dw_qos)), topic);
+                let mut datawriter = publisher.create_datawriter::<Shape>(
+                    DataWriterQos::Policies(Box::new(dw_qos)),
+                    topic.clone(),
+                );
                 poll.register(
                     &mut datawriter,
                     DATAWRITER,
@@ -157,8 +159,10 @@ fn main() -> Result<(), String> {
                         policy::Reliability::default_besteffort()
                     })
                     .build();
-                let mut datareader = subscriber
-                    .create_datareader::<Shape>(DataReaderQos::Policies(Box::new(dr_qos)), topic);
+                let mut datareader = subscriber.create_datareader::<Shape>(
+                    DataReaderQos::Policies(Box::new(dr_qos)),
+                    topic.clone(),
+                );
                 poll.register(
                     &mut datareader,
                     DATAREADER,
@@ -213,7 +217,6 @@ fn main() -> Result<(), String> {
                         break 'dds_loop;
                     } else {
                         is_success = true;
-                        datawriter.unwrap().stop();
                         break 'dds_loop;
                     }
                 }
@@ -238,7 +241,6 @@ fn main() -> Result<(), String> {
                                     }
                                     if received > 5 {
                                         println!("--- shapes_demo_for_autotest end");
-                                        dr.stop();
                                         break 'dds_loop;
                                     }
                                 }

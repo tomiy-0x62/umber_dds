@@ -94,12 +94,6 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         self.qos = qos;
     }
 
-    pub fn stop(&self) {
-        self.drop_entity_sender
-            .send(self.writer_guid)
-            .expect("failed send drop_entity_sender");
-    }
-
     /// publish data for matching DataReader
     pub fn write(&mut self, data: &W) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
@@ -295,6 +289,20 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
     ///   correspond to any active instance known to this `DataWriter`.
     pub fn get_key_value(_handle: InstanceHandle) -> Option<W::KeyHolder> {
         todo!();
+    }
+}
+
+impl<W: Writable<Endianness> + DdsData> Drop for DataWriter<W> {
+    fn drop(&mut self) {
+        if self.writer_guid.entity_id.is_builtin() {
+            return;
+        }
+        if let Err(e) = self.drop_entity_sender.send(self.writer_guid) {
+            warn!(
+                "failed send drop_entity_sender: {}\n\tDataWriter: {}",
+                e, self.writer_guid
+            );
+        }
     }
 }
 

@@ -258,6 +258,7 @@ impl InnerPublisher {
             nics,
         );
         let guid = GUID::new(self.dp.guid_prefix(), entity_id);
+        self.dp.register_entity(guid);
         let writer_ing = WriterIngredients {
             guid,
             reliability_level,

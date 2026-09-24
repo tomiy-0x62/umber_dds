@@ -1,4 +1,5 @@
 use clap::{Arg, Command};
+use ctrlc;
 use log::LevelFilter;
 use log4rs::{
     append::console::ConsoleAppender,
@@ -6,7 +7,7 @@ use log4rs::{
     encode::pattern::PatternEncoder,
     init_config, init_file,
 };
-use mio_extras::timer::Timer;
+use mio_extras::{channel as mio_channel, timer::Timer};
 use mio_v06::{Events, Poll, PollOpt, Ready, Token};
 use rand::SeedableRng;
 use speedy::Writable;
@@ -86,6 +87,7 @@ fn main() {
     const DATAREADER: Token = Token(0);
     const DATAWRITER: Token = Token(1);
     const WRITETIMTER: Token = Token(2);
+    const STOP: Token = Token(3);
 
     let now = SystemTime::now()
         .duration_since(SystemTime::UNIX_EPOCH)
@@ -109,6 +111,15 @@ fn main() {
         TopicQos::Policies(Box::new(topic_qos)),
     );
 
+    let (stop_sender, stop_receiver) = mio_channel::sync_channel::<()>(1);
+    ctrlc::set_handler(move || {
+        println!("SIGINT received");
+        stop_sender
+            .send(())
+            .expect("Could not send signal on channel.");
+    })
+    .expect("Error setting Ctrl-C handler");
+
     if let Some(pub_sub) = args.get_one::<String>("mode").map(String::as_str) {
         match pub_sub {
             "p" | "P" => {
@@ -127,6 +138,8 @@ fn main() {
                 let mut timer = Timer::default();
                 poll.register(&timer, WRITETIMTER, Ready::readable(), PollOpt::edge())
                     .unwrap();
+                poll.register(&stop_receiver, STOP, Ready::readable(), PollOpt::edge())
+                    .unwrap();
                 timer.set_timeout(Duration::from_millis(100), ());
                 let mut shape = Shape {
                     color: "Red".to_string(),
@@ -134,7 +147,7 @@ fn main() {
                     y: 0,
                     shapesize: 42,
                 };
-                loop {
+                'pub_loop: loop {
                     let mut events = Events::with_capacity(64);
                     poll.poll(&mut events, None).unwrap();
                     for event in events.iter() {
@@ -175,6 +188,9 @@ fn main() {
                                 shape.y = (shape.y + 5) % 255;
                                 timer.set_timeout(Duration::from_millis(1000), ());
                             }
+                            STOP => {
+                                break 'pub_loop;
+                            }
                             _ => (), // unreachable
                         }
                     }
@@ -193,7 +209,9 @@ fn main() {
                     .create_datareader::<Shape>(DataReaderQos::Policies(Box::new(dr_qos)), topic);
                 poll.register(&datareader, DATAREADER, Ready::readable(), PollOpt::edge())
                     .unwrap();
-                loop {
+                poll.register(&stop_receiver, STOP, Ready::readable(), PollOpt::edge())
+                    .unwrap();
+                'sub_loop: loop {
                     let mut events = Events::with_capacity(64);
                     poll.poll(&mut events, None).unwrap();
                     for event in events.iter() {
@@ -233,6 +251,9 @@ fn main() {
                                         _ => (), // TODO
                                     }
                                 }
+                            }
+                            STOP => {
+                                break 'sub_loop;
                             }
                             _ => (), // unreachable
                         }

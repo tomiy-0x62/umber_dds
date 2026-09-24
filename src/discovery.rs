@@ -447,13 +447,19 @@ impl Discovery {
                         DROP_ENTITY => {
                             while let Ok(guid) = self.drop_entity_receiver.try_recv() {
                                 if guid.entity_id.is_reader() {
-                                    debug!("drop Reader received\n\tReader: {} ", guid);
-                                    self.sedp_builtin_sub_writer.write_data_ud(guid);
-                                    self.local_readers_data.remove(&guid.entity_id);
+                                    if self.local_readers_data.remove(&guid.entity_id).is_some() {
+                                        debug!("drop Reader received\n\tReader: {} ", guid);
+                                        self.sedp_builtin_sub_writer.write_data_ud(guid);
+                                    } else {
+                                        debug!("drop Reader received, but already droped\n\tReader: {} ", guid);
+                                    }
                                 } else if guid.entity_id.is_writer() {
-                                    debug!("drop Writer received\n\tWriter: {} ", guid);
-                                    self.sedp_builtin_pub_writer.write_data_ud(guid);
-                                    self.local_writers_data.remove(&guid.entity_id);
+                                    if self.local_writers_data.remove(&guid.entity_id).is_some() {
+                                        debug!("drop Writer received\n\tWriter: {} ", guid);
+                                        self.sedp_builtin_pub_writer.write_data_ud(guid);
+                                    } else {
+                                        debug!("drop Writer received, but already droped\n\tWriter: {} ", guid);
+                                    }
                                 } else if guid.entity_id == EntityId::PARTICIPANT {
                                     debug!("drop Participant received\n\tParticipant: {} ", guid);
                                     // stop SPDP_SEND_TIMER

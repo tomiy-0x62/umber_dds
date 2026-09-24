@@ -248,6 +248,7 @@ impl InnerSubscriber {
             nics,
         );
         let reader_guid = GUID::new(self.dp.guid_prefix(), entity_id);
+        self.dp.register_entity(reader_guid);
         let reader_ing = ReaderIngredients {
             data_type: PhantomData::<R>,
             guid: reader_guid,

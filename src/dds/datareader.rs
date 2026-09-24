@@ -14,7 +14,7 @@ use crate::DdsData;
 use alloc::sync::Arc;
 use awkernel_sync::rwlock::RwLock;
 use core::marker::PhantomData;
-use log::{error, info};
+use log::{error, info, warn};
 use mio_extras::channel as mio_channel;
 use mio_v06::{event::Evented, Poll, PollOpt, Ready, Token};
 use speedy::{Endianness, Readable};
@@ -65,12 +65,6 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
             reader_state_receiver,
             drop_entity_sender,
         }
-    }
-
-    pub fn stop(&self) {
-        self.drop_entity_sender
-            .send(self._reader_guid)
-            .expect("failed send drop_entity_sender");
     }
 
     /// get available data received from DataWriter
@@ -192,6 +186,20 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
     ///   correspond to any active instance known to this `DataReader`.
     pub fn get_key_value(_handle: InstanceHandle) -> Option<R::KeyHolder> {
         todo!();
+    }
+}
+
+impl<R: for<'a> Readable<'a, Endianness> + DdsData> Drop for DataReader<R> {
+    fn drop(&mut self) {
+        if self._reader_guid.entity_id.is_builtin() {
+            return;
+        }
+        if let Err(e) = self.drop_entity_sender.send(self._reader_guid) {
+            warn!(
+                "failed send drop_entity_sender: {}\n\tDataReader: {}",
+                e, self._reader_guid
+            );
+        }
     }
 }
 

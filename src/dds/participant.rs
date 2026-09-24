@@ -39,7 +39,7 @@ use core::net::Ipv4Addr;
 use core::sync::atomic::{AtomicU32, Ordering};
 use core::time::Duration as CoreDuration;
 use enumflags2::make_bitflags;
-use log::{info, trace};
+use log::{info, trace, warn};
 use mio_extras::channel as mio_channel;
 use mio_v06::net::UdpSocket;
 use rand::rngs::SmallRng;
@@ -50,10 +50,18 @@ use awkernel_sync::{mcs::MCSNode, mutex::Mutex};
 /// DDS DomainParticipant
 ///
 /// factory for the Publisher, Subscriber and Topic.
-#[derive(Clone)]
 pub struct DomainParticipant {
     inner: Arc<Mutex<DomainParticipantInner>>,
-    event_loop_stop_sender: mio_channel::SyncSender<()>,
+    owner: bool,
+}
+
+impl Clone for DomainParticipant {
+    fn clone(&self) -> Self {
+        Self {
+            inner: self.inner.clone(),
+            owner: false,
+        }
+    }
 }
 
 impl RTPSEntity for DomainParticipant {
@@ -126,11 +134,12 @@ impl DomainParticipant {
             dp_network_interfaces.clone(),
             participant_config,
             drop_entity_sender,
+            event_loop_stop_sender.clone(),
             small_rng,
         );
         let dp = Self {
             inner: Arc::new(Mutex::new(dp_inner)),
-            event_loop_stop_sender: event_loop_stop_sender.clone(),
+            owner: true,
         };
         let (be, be_ing) = create_builtin_endpoints(&dp);
         let mut node = MCSNode::new();
@@ -138,12 +147,11 @@ impl DomainParticipant {
         let spdp_data_kh = dp.inner.lock(&mut node).spdp_data_kh;
 
         let serialized_spdp_data_clone = serialized_spdp_data.clone();
-        let dp_clone = dp.clone();
         let discovery_db_clone = discovery_db.clone();
+        let guid_prefix = dp.guid_prefix();
         let ev_loop_handler = thread::Builder::new()
             .name("EventLoop".to_string())
             .spawn(move || {
-                let guid_prefix = dp_clone.guid_prefix();
                 let ev_loop = EventLoop::new(
                     domain_id,
                     guid_prefix,
@@ -194,35 +202,6 @@ impl DomainParticipant {
         info!("created new Participant {}", dp.guid());
         dp
     }
-    pub fn stop(self) {
-        let (drop_entity_sender, my_guid, ev_loop_handler, discovery_handler) = {
-            let mut node = MCSNode::new();
-            let mut lock = self.inner.lock(&mut node);
-            (
-                lock.drop_entity_sender.clone(),
-                lock.my_guid,
-                lock.ev_loop_handler.take(),
-                lock.discovery_handler.take(),
-            )
-        };
-
-        drop_entity_sender
-            .send(my_guid)
-            .expect("failed send drop_entity_sender");
-        self.event_loop_stop_sender
-            .send(())
-            .expect("failed send event_loop_stop_sender");
-        ev_loop_handler
-            .expect("failed get ev_loop_handler")
-            .join()
-            .unwrap();
-        trace!("EventLoop thread joined");
-        discovery_handler
-            .expect("failed get discovery_handler")
-            .join()
-            .unwrap();
-        trace!("Discovery thread joined");
-    }
     pub fn create_publisher(&self, qos: PublisherQos) -> Publisher {
         let mut node = MCSNode::new();
         self.inner
@@ -234,6 +213,10 @@ impl DomainParticipant {
         self.inner
             .lock(&mut node)
             .create_subscriber(self.clone(), qos)
+    }
+    pub(crate) fn register_entity(&self, entity: GUID) {
+        let mut node = MCSNode::new();
+        self.inner.lock(&mut node).register_entity(entity)
     }
     pub fn create_topic<D: DdsData>(&self, name: String, qos: TopicQos) -> Topic {
         let mut node = MCSNode::new();
@@ -299,6 +282,16 @@ impl DomainParticipant {
     }
 }
 
+impl Drop for DomainParticipant {
+    fn drop(&mut self) {
+        if self.owner {
+            trace!("owner Participant::drop() called");
+            let mut node = MCSNode::new();
+            self.inner.lock(&mut node).shutdown();
+        }
+    }
+}
+
 pub(crate) struct DomainParticipantInner {
     domain_id: u16,
     participant_id: u16,
@@ -318,6 +311,8 @@ pub(crate) struct DomainParticipantInner {
     _spdp_data: SPDPdiscoveredParticipantData,
     serialized_spdp_data: SerializedPayload,
     spdp_data_kh: Option<KeyHash>,
+    event_loop_stop_sender: mio_channel::SyncSender<()>,
+    entity: Vec<GUID>,
 }
 
 impl DomainParticipantInner {
@@ -328,6 +323,7 @@ impl DomainParticipantInner {
         network_interfaces: Vec<Ipv4Addr>,
         participant_config: ParticipantConfig,
         drop_entity_sender: mio_channel::Sender<GUID>,
+        event_loop_stop_sender: mio_channel::SyncSender<()>,
         small_rng: &mut SmallRng,
     ) -> (DomainParticipantInner, EvLoopIngredients) {
         let mut socket_list: BTreeMap<mio_v06::Token, UdpSocket> = BTreeMap::new();
@@ -447,6 +443,8 @@ impl DomainParticipantInner {
             _spdp_data: spdp_data,
             spdp_data_kh,
             serialized_spdp_data,
+            event_loop_stop_sender,
+            entity: Vec::new(),
         };
         let ev_loop_ing = EvLoopIngredients {
             socket_list,
@@ -504,6 +502,10 @@ impl DomainParticipantInner {
                 self.drop_entity_sender.clone(),
             ),
         }
+    }
+
+    fn register_entity(&mut self, entity: GUID) {
+        self.entity.push(entity);
     }
 
     fn create_topic<D: DdsData>(
@@ -573,6 +575,39 @@ impl DomainParticipantInner {
     }
     pub fn set_default_topic_qos(&mut self, qos: TopicQosPolicies) {
         self.default_topic_qos = qos;
+    }
+
+    fn shutdown(&mut self) {
+        let Some(ev_loop_handler) = self.ev_loop_handler.take() else {
+            warn!("DomainParticipantInner::shutdown() called, but already EventLoop thread handler taken");
+            return;
+        };
+        trace!("DomainParticipantInner::shutdown() called");
+        let discovery_handler = self
+            .discovery_handler
+            .take()
+            .expect("failed get discovery_handler");
+        for guid in &self.entity {
+            self.drop_entity_sender
+                .send(*guid)
+                .expect("failed send drop_entity_sender");
+        }
+        self.drop_entity_sender
+            .send(self.my_guid)
+            .expect("failed send drop_entity_sender");
+        self.event_loop_stop_sender
+            .send(())
+            .expect("failed send event_loop_stop_sender");
+        ev_loop_handler.join().unwrap();
+        trace!("EventLoop thread joined");
+        discovery_handler.join().unwrap();
+        trace!("Discovery thread joined");
+    }
+}
+
+impl Drop for DomainParticipantInner {
+    fn drop(&mut self) {
+        trace!("DomainParticipantInner droped");
     }
 }
 
