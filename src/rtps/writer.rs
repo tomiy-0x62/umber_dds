@@ -376,12 +376,7 @@ impl Writer {
                     let time_stamp = Timestamp::now();
                     message_builder.info_ts(Endianness::LittleEndian, time_stamp);
                     let key_hash = if self.is_keyed {
-                        if let Some(kh) = self.writer_cache.read().ih2kh(aa_change.instance_handle)
-                        {
-                            Some(kh)
-                        } else {
-                            None
-                        }
+                        self.writer_cache.read().ih2kh(aa_change.instance_handle)
                     } else {
                         None
                     };

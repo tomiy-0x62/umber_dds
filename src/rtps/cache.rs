@@ -40,6 +40,7 @@ pub struct CacheChange {
 }
 
 impl CacheChange {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kind: ChangeKind,
         writer_guid: GUID,
@@ -81,6 +82,7 @@ pub struct CacheChangeIng {
 }
 
 impl CacheChangeIng {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kind: ChangeKind,
         writer_guid: GUID,

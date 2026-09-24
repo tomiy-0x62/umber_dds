@@ -50,6 +50,7 @@ pub struct DataWriter<W: Writable<Endianness> + DdsData> {
 }
 
 impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         writer_command_sender: mio_channel::SyncSender<WriterCmd>,
         writer_guid: GUID,

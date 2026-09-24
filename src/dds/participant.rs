@@ -577,6 +577,13 @@ impl DomainParticipantInner {
         self.default_topic_qos = qos;
     }
 
+    /// The shutdown messages for DataWriter and DataReader (`DATA(w[UD])` / `DATA(r[UD])`) are normally sent from their respective destructors.
+    ///
+    /// However, if the destructor of the DomainParticipant (owner) runs before the destructors of the DataWriter or DataReader, these shutdown messages may not be sent.
+    ///
+    /// To prevent this problem, the DomainParticipant keeps the GUIDs of the DataWriters and DataReaders it creates.
+    /// The DomainParticipant destructor then attempts to send shutdown messages for these GUIDs.
+    /// This ensures that the shutdown messages are sent even if the destructors of the individual entities are not executed.
     fn shutdown(&mut self) {
         let Some(ev_loop_handler) = self.ev_loop_handler.take() else {
             warn!("DomainParticipantInner::shutdown() called, but already EventLoop thread handler taken");

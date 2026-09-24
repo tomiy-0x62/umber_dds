@@ -1,4 +1,23 @@
 //! An experimental Rust implementation of Data Distribution Service.
+//!
+//! # Notice
+//! Explicitly sending shutdown message of DataWriter, DataReader, and DomainParticipant
+//! allows the corresponding entities to be unmatched immediately,without waiting for the lease to expire,
+//! and stops unnecessary message transmission.
+//!
+//! In this implementation, DataWriter, DataReader and DomainParticipant destructor sends
+//! a shutdown message. However, the destructor is not executed when the process is forcibly
+//! terminated by Ctrl-C or when the application exits using std::process::exit().
+//! In such cases, the shutdown message may not be sent.
+//!
+//! Therefore, applications should avoid terminating with std::process::exit() and instead exit normally
+//! by setting a termination flag and leaving the main loop.
+//!
+//! We also recommend registering a signal handler using a crate such as ctrlc so that receiving Ctrl-C
+//! initiates a graceful shutdown. The signal handler should notify the main loop to terminate
+//! rather than exiting the process directly.
+//!
+//!
 //! # Usage Example
 //!
 //! ```toml

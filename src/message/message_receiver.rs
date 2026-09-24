@@ -817,6 +817,7 @@ impl MessageReceiver {
             }
         }
     }
+    #[allow(clippy::too_many_arguments)]
     fn handle_spdp_data(
         &mut self,
         data: Data,
