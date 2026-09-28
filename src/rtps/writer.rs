@@ -36,8 +36,8 @@ use mio_v06::Token;
 use speedy::{Endianness, Writable};
 
 pub enum WriterTimer {
-    Nack(EntityId, GUID),             // self.entity_id, Reader GUID
-    Deadline(EntityId, CoreDuration), // self.entity_id, deadline.period
+    Nack(EntityId, GUID),                             // self.entity_id, Reader GUID
+    Deadline(EntityId, InstanceHandle, CoreDuration), // self.entity_id, InstanceHandle, deadline.period
 }
 
 /// RTPS StatefulWriter
@@ -105,10 +105,15 @@ impl Writer {
         writer_cache.write().add_empty_change(wi.guid);
         let deadline_period = wi.qos.deadline().period;
         let wt = if deadline_period != Duration::INFINITE {
-            Some(WriterTimer::Deadline(
-                wi.guid.entity_id,
-                deadline_period.into(),
-            ))
+            if !wi.is_keyed {
+                Some(WriterTimer::Deadline(
+                    wi.guid.entity_id,
+                    InstanceHandle::HANDLE_NO_KEY,
+                    deadline_period.into(),
+                ))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -199,8 +204,8 @@ impl Writer {
         while let Ok(cmd) = self.writer_command_receiver.try_recv() {
             match cmd {
                 WriterCmd::WriteData => {
-                    if let Some(wt) = self.handle_write_data_cmd() {
-                        wtv.push(wt);
+                    if let Some(mut wt) = self.handle_write_data_cmd() {
+                        wtv.append(&mut wt);
                     }
                 }
                 WriterCmd::AssertLiveliness => self.assert_liveliness_manually(),
@@ -256,10 +261,10 @@ impl Writer {
         self.send_heart_beat(true);
     }
 
-    fn handle_write_data_cmd(&mut self) -> Option<WriterTimer> {
+    fn handle_write_data_cmd(&mut self) -> Option<Vec<WriterTimer>> {
         self.is_alive = true;
 
-        let wt: Option<WriterTimer>;
+        let mut wt: Vec<WriterTimer> = Vec::new();
 
         // get changes from HistoryCache and register it to cache_state of ReaderProxy
         let history = self.qos.history();
@@ -278,8 +283,7 @@ impl Writer {
                 // called Writer::handle_write_data_cmd but writer_cache.unprocessed is empty.
                 // This decrease occurs when multiple data samples are written to the same DataWriter
                 // within a short period of time.
-                wt = None;
-                return wt;
+                return if wt.is_empty() { None } else { Some(wt) };
             }
         };
         for (i, seq_num) in seq_nums.iter().rev().enumerate() {
@@ -309,14 +313,6 @@ impl Writer {
         }
 
         let deadline_period = self.qos.deadline().period;
-        if deadline_period != Duration::INFINITE {
-            wt = Some(WriterTimer::Deadline(
-                self.guid.entity_id,
-                deadline_period.into(),
-            ));
-        } else {
-            wt = None;
-        }
 
         let self_guid = self.guid();
         let self_guid_prefix = self.guid_prefix();
@@ -368,6 +364,21 @@ impl Writer {
         }
         for seq_num in to_send_data.keys() {
             if let Some(aa_change) = self.writer_cache.read().get_change(self.guid, *seq_num) {
+                if deadline_period != Duration::INFINITE {
+                    if self.is_keyed {
+                        wt.push(WriterTimer::Deadline(
+                            self.guid.entity_id,
+                            aa_change.instance_handle,
+                            deadline_period.into(),
+                        ));
+                    } else {
+                        wt.push(WriterTimer::Deadline(
+                            self.guid.entity_id,
+                            InstanceHandle::HANDLE_NO_KEY,
+                            deadline_period.into(),
+                        ));
+                    }
+                }
                 let reader_locators = to_send_data.get(seq_num).unwrap();
                 let send_list = Self::min_message_cover(reader_locators);
                 for (reid, loc) in send_list {
@@ -430,7 +441,11 @@ impl Writer {
                     .remove_change(&HCKey::new(self.guid, *seq_num), false);
             }
         }
-        wt
+        if wt.is_empty() {
+            None
+        } else {
+            Some(wt)
+        }
     }
 
     pub fn send_builtin_data_for_loc(
@@ -441,10 +456,10 @@ impl Writer {
         locator: Vec<Locator>,
     ) {
         let time_stamp = Timestamp::now().expect("failed to get Timestamp::now()");
-        let ih = self
-            .writer_cache
-            .write()
-            .key_hash2instance_handle(builtin_data_kh.unwrap_or(KeyHash::ZERO));
+        let ih = self.writer_cache.write().key_hash2instance_handle(
+            builtin_data_kh.unwrap_or(KeyHash::ZERO),
+            self.qos.resource_limits(),
+        );
         let a_change = CacheChange::new(
             ChangeKind::Alive,
             self.guid,

@@ -189,7 +189,7 @@ pub enum ChangeKind {
     _NotAliveUnregistered,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Debug)]
 pub struct InstanceHandle {
     instance_id: u32,
 }
@@ -199,12 +199,19 @@ impl InstanceHandle {
     pub const HANDLE_NIL: Self = Self {
         instance_id: u32::MIN,
     };
-    pub const HANDLE_ENTITY: Self = Self { instance_id: 1 };
+    // Umber DDS specific. for instance of no_key writer/reader
+    // if KeyHash is KeyHash::ZERO use HANDLE_NO_KEY
+    pub const HANDLE_NO_KEY: Self = Self { instance_id: 1 };
+    // Umber DDS specific. for instance of keyed writer/reader
+    // if KeyHash is KeyHash::ZERO or threr is no Data use HANDLE_NO_DATA
+    pub const HANDLE_NO_DATA: Self = Self { instance_id: 2 };
     /// return valid InstanceHandle
     ///
     /// id must more than u32::MIN
     pub(crate) fn new(id: u32) -> Self {
         assert!(id > Self::HANDLE_NIL.instance_id);
+        assert_ne!(id, Self::HANDLE_NO_KEY.instance_id);
+        assert_ne!(id, Self::HANDLE_NO_DATA.instance_id);
         Self { instance_id: id }
     }
 }
@@ -260,7 +267,8 @@ impl core::fmt::Display for HistoryCacheType {
 
 pub(crate) struct HistoryCache {
     pub changes: BTreeMap<HCKey, CacheChange>,
-    pub ts2key: Vec<HCKey>,
+    pub instance_handle2key_ts: BTreeMap<InstanceHandle, Vec<HCKey>>,
+    ts2key: Vec<HCKey>,
     kind2key: BTreeMap<ChangeKind, BTreeSet<HCKey>>,
     hc_type: HistoryCacheType,
     /// only use type Writer
@@ -298,6 +306,7 @@ impl HistoryCache {
     pub fn new(hc_type: HistoryCacheType) -> Self {
         Self {
             changes: BTreeMap::new(),
+            instance_handle2key_ts: BTreeMap::new(),
             ts2key: Vec::new(),
             kind2key: BTreeMap::new(),
             last_added: BTreeMap::new(),
@@ -311,10 +320,19 @@ impl HistoryCache {
             keyhash_instancehandle: BiMap::new(),
         }
     }
-    pub fn key_hash2instance_handle(&mut self, keyhash: KeyHash) -> InstanceHandle {
+    pub fn key_hash2instance_handle(
+        &mut self,
+        keyhash: KeyHash,
+        resource_limits: ResourceLimits,
+    ) -> InstanceHandle {
         if let Some(ih) = self.keyhash_instancehandle.get_by_left(&keyhash) {
             *ih
         } else {
+            let max_instance = resource_limits.max_instance as usize;
+            let instance_num = self.keyhash_instancehandle.len();
+            if instance_num > max_instance - 1 {
+                unimplemented!("reached ResourceLimits.max_instance");
+            }
             let ih = InstanceHandle::new(self.next_ih);
             self.keyhash_instancehandle.insert(keyhash, ih);
             self.next_ih += 1;
@@ -341,6 +359,8 @@ impl HistoryCache {
     ) -> Result<(), AddChangeErr> {
         let seq_num = change.sequence_number;
         let key = HCKey::new(change.writer_guid, seq_num);
+        let ih = change.instance_handle;
+        assert_ne!(ih, InstanceHandle::HANDLE_NIL);
         if let Some(c) = self.changes.get(&key) {
             if c.data_value == change.data_value {
                 match self.hc_type {
@@ -370,48 +390,65 @@ impl HistoryCache {
                 */
             }
         } else {
+            macro_rules! handle_resource_limits {
+                ($oldest_key:ident) => {
+                    match self.hc_type {
+                        HistoryCacheType::Writer => {
+                            if is_reliable {
+                                // block until some change removed from self
+                                // if block here, nobody can access self.
+                                return Err(AddChangeErr::WouldBlock(
+                                    "resource_limits.max_samples reached".to_string(),
+                                ));
+                            } else {
+                                // remove oldest sample
+                                warn!("BestEffort Writer HistoryCache reached ResourceLimits, remove {:?}", $oldest_key);
+                                self.remove_change(&$oldest_key, false);
+                            }
+                        }
+                        HistoryCacheType::Reader => {
+                            if is_reliable {
+                                // discard change
+                                return Ok(());
+                            } else {
+                                // remove oldest sample
+                                warn!(
+                                "BestEffort Reader HistoryCache reached ResourceLimits, remove {:?}",
+                                $oldest_key
+                            );
+                                self.remove_change(&$oldest_key, false);
+                            }
+                        }
+                        HistoryCacheType::Dummy => unreachable!(),
+                    }
+                };
+            }
             let max_samples = resource_limits.max_samples;
+            let max_samples_per_instance = resource_limits.max_samples_per_instanse;
+            if let Some(instance_ts2key) = self.instance_handle2key_ts.get(&ih) {
+                if max_samples_per_instance != LENGTH_UNLIMITED
+                    && instance_ts2key.len() + 1 >= max_samples_per_instance as usize
+                {
+                    // reach ResourceLimits.max_samples_per_instance
+                    let oldest_key = instance_ts2key[0];
+                    handle_resource_limits!(oldest_key);
+                }
+            }
             if max_samples != LENGTH_UNLIMITED && self.changes.len() + 1 >= max_samples as usize {
-                // reach ResourceLimits
+                // reach ResourceLimits.max_samples
                 // DDS v1.4 spec, 2.2.3.19 RESOURCE_LIMITS
                 // The behavior in this case depends on the setting for the RELIABILITY QoS.
                 // If reliability is BEST_EFFORT then the Service is allowed to drop samples.
                 // If the reliability is RELIABLE, the Service will block the DataWriter or
                 // discard the sample at the DataReader 28 in order not to lose existing samples.
-                match self.hc_type {
-                    HistoryCacheType::Writer => {
-                        if is_reliable {
-                            // block until some change removed from self
-                            // if block here, nobody can access self.
-                            return Err(AddChangeErr::WouldBlock(
-                                "resource_limits.max_samples reached".to_string(),
-                            ));
-                        } else {
-                            // remove oldest sample
-                            warn!("BestEffort Writer HistoryCache reached ResourceLimits, remove {:?}", self.ts2key[0]);
-                            self.remove_change(&self.ts2key[0].clone(), false);
-                        }
-                    }
-                    HistoryCacheType::Reader => {
-                        if is_reliable {
-                            // discard change
-                            return Ok(());
-                        } else {
-                            // remove oldest sample
-                            warn!(
-                                "BestEffort Reader HistoryCache reached ResourceLimits, remove {:?}",
-                                self.ts2key[0]
-                            );
-                            self.remove_change(&self.ts2key[0].clone(), false);
-                        }
-                    }
-                    HistoryCacheType::Dummy => unreachable!(),
-                }
+                let oldest_key = self.ts2key[0];
+                handle_resource_limits!(oldest_key);
             }
             self.last_added.insert(key.guid, change.timestamp);
-            self.ts2key.push(key);
+            self.instance_handle2key_ts.entry(ih).or_default().push(key);
             self.kind2key.entry(change.kind).or_default().insert(key);
             self.changes.insert(key, change);
+            self.ts2key.push(key);
             debug!("add change with {} to {} HistoryCache", key, self.hc_type);
             if let HistoryCacheType::Reader = self.hc_type {
                 if history.kind == HistoryQosKind::KeepLast {
@@ -424,8 +461,10 @@ impl HistoryCache {
                     // keep the hdepth largest keys and delete the rest
                     let hdepth = history.depth;
                     let todo_delete: Vec<HCKey> = self
-                        .changes
-                        .keys()
+                        .instance_handle2key_ts
+                        .get(&ih)
+                        .expect("failed get HCKey correnpond to InstanceHandle")
+                        .iter()
                         .rev()
                         .skip(hdepth as usize)
                         .cloned()
@@ -602,6 +641,7 @@ impl HistoryCache {
                 "remove change with {} from {} HistoryCache",
                 key, self.hc_type
             );
+            let ih = c.instance_handle;
             if let HistoryCacheType::Reader = self.hc_type {
                 if taken {
                     self.taken_key.insert(*key);
@@ -615,6 +655,23 @@ impl HistoryCache {
                         key, self.hc_type
                     );
                 }
+            }
+            if let Some(idx) = self
+                .instance_handle2key_ts
+                .get(&ih)
+                .expect("failed get HCKey correnpond to InstanceHandle")
+                .iter()
+                .position(|k| k == key)
+            {
+                self.instance_handle2key_ts
+                    .get_mut(&ih)
+                    .unwrap()
+                    .remove(idx);
+            } else {
+                warn!(
+                    "attempt to remove change with {} from {} HistoryCache::ts2key but not found",
+                    key, self.hc_type
+                );
             }
         } else {
             warn!(

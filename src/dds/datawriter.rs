@@ -184,11 +184,18 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         } else if self.last_change_sequence_number == SequenceNumber(0) {
             self.last_change_sequence_number = SequenceNumber(1);
         }
-        let instance_handle = if let Some(kh) = key_hash {
-            self.whc.write().key_hash2instance_handle(kh)
+        let instance_handle = if self.is_keyed {
+            if let Some(kh) = key_hash {
+                self.whc
+                    .write()
+                    .key_hash2instance_handle(kh, self.qos.resource_limits())
+            } else {
+                InstanceHandle::HANDLE_NO_DATA
+            }
         } else {
-            InstanceHandle::HANDLE_NIL
+            InstanceHandle::HANDLE_NO_KEY
         };
+
         let a_change = CacheChange::new(
             ChangeKind::Alive,
             self.writer_guid,

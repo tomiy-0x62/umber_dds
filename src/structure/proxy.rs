@@ -2,7 +2,7 @@ use crate::dds::qos::{policy::Durability, DataReaderQosPolicies, DataWriterQosPo
 use crate::message::submessage::element::{Locator, SequenceNumber};
 use crate::rtps::cache::{
     ChangeForReader, ChangeForReaderStatusKind, ChangeFromWriter, ChangeFromWriterStatusKind,
-    HistoryCache,
+    HCKey, HistoryCache,
 };
 use crate::structure::{guid::GUID, parameter_id::ParameterId};
 use alloc::collections::BTreeMap;
@@ -56,7 +56,11 @@ impl ReaderProxy {
         {
             let hc = history_cache.read();
             for k in hc.changes.keys() {
-                let latest = hc.ts2key[hc.ts2key.len() - 1];
+                let latests: Vec<HCKey> = hc
+                    .instance_handle2key_ts
+                    .values()
+                    .filter_map(|vec| vec.last().cloned())
+                    .collect();
                 let is_relevant = {
                     match durability {
                         Durability::Volatile => false,
@@ -64,7 +68,7 @@ impl ReaderProxy {
                             if remote_reader_guid.entity_id.is_builtin() {
                                 true
                             } else {
-                                *k == latest
+                                latests.contains(k)
                             }
                         }
                     }

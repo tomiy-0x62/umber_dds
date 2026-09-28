@@ -9,7 +9,7 @@ use crate::discovery::{
     structure::data::{DiscoveredReaderData, DiscoveredWriterData},
     BuiltinEndpointsIngredients, DiscoveryDBUpdateNotifier,
 };
-use crate::rtps::cache::HCKey;
+use crate::rtps::cache::{HCKey, InstanceHandle};
 use crate::rtps::reader::{ReaderIngredientsType, ReaderTimer, RtpsReader};
 use crate::rtps::writer::{Writer, WriterIngredients, WriterTimer};
 use crate::structure::{Duration, EntityId, GuidPrefix, RTPSEntity, GUID};
@@ -52,12 +52,12 @@ pub struct EventLoop {
     udp_sender: Arc<UdpSender>,
     writer_hb_timer: Timer<EntityId>,
     reader_hb_timer: Timer<(EntityId, GUID)>, // (reader EntityId, writer GUID)
-    reader_deadline_timer: Timer<((EntityId, GUID), CoreDuration)>, // (reader EntityId, writer GUID)
-    reader_deadline_timeout: BTreeMap<(EntityId, GUID), Timeout>, // (reader EntityId, writer GUID)
-    reader_lifespan_timer: Timer<(EntityId, HCKey)>,              // (reader EntityId, writer GUID)
-    writer_nack_timer: Timer<(EntityId, GUID)>,                   // (writer EntityId, reader GUID)
-    writer_deadline_timer: Timer<(EntityId, CoreDuration)>,
-    writer_deadline_timeout: BTreeMap<EntityId, Timeout>,
+    reader_deadline_timer: Timer<((EntityId, InstanceHandle, GUID), CoreDuration)>, // (reader EntityId, InstanceHandle,  writer GUID)
+    reader_deadline_timeout: BTreeMap<(EntityId, InstanceHandle, GUID), Timeout>, // (reader EntityId, InstanceHandle, writer GUID)
+    reader_lifespan_timer: Timer<(EntityId, HCKey)>, // (reader EntityId, writer GUID)
+    writer_nack_timer: Timer<(EntityId, GUID)>,      // (writer EntityId, reader GUID)
+    writer_deadline_timer: Timer<(EntityId, InstanceHandle, CoreDuration)>,
+    writer_deadline_timeout: BTreeMap<(EntityId, InstanceHandle), Timeout>,
     wlp_timer_receiver: mio_channel::Receiver<EntityId>,
     wlp_timer: Timer<EntityId>,                //  reader EntityId
     wlp_timeouts: BTreeMap<EntityId, Timeout>, //  reader EntityId
@@ -291,10 +291,10 @@ impl EventLoop {
                         error!("not found Reader from EventLoop.readers which attempt to set heartbeat timer\n\tReader: {}", reader_entity_id);
                     }
                 }
-                ReaderTimer::Deadline(reader_entity_id, writer_guid, duration) => {
-                    if let Some(to) = self
-                        .reader_deadline_timeout
-                        .get(&(*reader_entity_id, *writer_guid))
+                ReaderTimer::Deadline(reader_entity_id, ih, writer_guid, duration) => {
+                    if let Some(to) =
+                        self.reader_deadline_timeout
+                            .get(&(*reader_entity_id, *ih, *writer_guid))
                     {
                         trace!(
                             "cancel Writer Deadline timer({:?})\n\tReader: {}\n\tWriter: {}",
@@ -310,11 +310,12 @@ impl EventLoop {
                         reader_entity_id,
                         writer_guid,
                     );
-                    let to = self
-                        .reader_deadline_timer
-                        .set_timeout(*duration, ((*reader_entity_id, *writer_guid), *duration));
+                    let to = self.reader_deadline_timer.set_timeout(
+                        *duration,
+                        ((*reader_entity_id, *ih, *writer_guid), *duration),
+                    );
                     self.reader_deadline_timeout
-                        .insert((*reader_entity_id, *writer_guid), to);
+                        .insert((*reader_entity_id, *ih, *writer_guid), to);
                 }
                 ReaderTimer::Lifespan(reader_entity_id, hc_key, ts, lifespan_duration) => {
                     let now = Timestamp::now().expect("failed get Timestamp::now");
@@ -350,8 +351,8 @@ impl EventLoop {
                         error!("not found Writer from EventLoop.writers which attempt to set nack response timer\n\tWriter: {}", writer_entity_id);
                     }
                 }
-                WriterTimer::Deadline(writer_entity_id, duration) => {
-                    if let Some(to) = self.writer_deadline_timeout.get(writer_entity_id) {
+                WriterTimer::Deadline(writer_entity_id, ih, duration) => {
+                    if let Some(to) = self.writer_deadline_timeout.get(&(*writer_entity_id, *ih)) {
                         trace!(
                             "cancel Writer Deadline timer({:?})\n\tWriter: {}",
                             duration,
@@ -366,8 +367,9 @@ impl EventLoop {
                     );
                     let to = self
                         .writer_deadline_timer
-                        .set_timeout(*duration, (*writer_entity_id, *duration));
-                    self.writer_deadline_timeout.insert(*writer_entity_id, to);
+                        .set_timeout(*duration, (*writer_entity_id, *ih, *duration));
+                    self.writer_deadline_timeout
+                        .insert((*writer_entity_id, *ih), to);
                 }
             }
         }
@@ -435,7 +437,7 @@ impl EventLoop {
                             }
                         }
                         READER_DEADLINE_TIMER => {
-                            while let Some(((reid, wguid), duration)) =
+                            while let Some(((reid, ih, wguid), duration)) =
                                 self.reader_deadline_timer.poll()
                             {
                                 trace!(
@@ -444,6 +446,8 @@ impl EventLoop {
                                     wguid
                                 );
                                 if let Some(reader) = self.readers.get(&reid) {
+                                    // TODO:
+                                    // `ih`の表すインスタンスの状態を確認し、有効でなければdeadline_missedの通知をせず、timerもセットしない。
                                     reader.notify_reqested_deadline_missed(wguid);
                                     trace!(
                                         "set Reader Deadline timer({:?})\n\tReader: {}",
@@ -452,8 +456,8 @@ impl EventLoop {
                                     );
                                     let to = self
                                         .reader_deadline_timer
-                                        .set_timeout(duration, ((reid, wguid), duration));
-                                    self.reader_deadline_timeout.insert((reid, wguid), to);
+                                        .set_timeout(duration, ((reid, ih, wguid), duration));
+                                    self.reader_deadline_timeout.insert((reid, ih, wguid), to);
                                 } else {
                                     unreachable!();
                                 }
@@ -478,7 +482,8 @@ impl EventLoop {
                             }
                         }
                         WRITER_DEADLINE_TIMER => {
-                            while let Some((eid, duration)) = self.writer_deadline_timer.poll() {
+                            while let Some((eid, ih, duration)) = self.writer_deadline_timer.poll()
+                            {
                                 trace!("fired Writer Deadline timer\n\tWriter: {}", eid);
                                 if let Some(writer) = self.writers.get(&eid) {
                                     writer.notify_offered_deadline_missed();
@@ -489,8 +494,8 @@ impl EventLoop {
                                     );
                                     let to = self
                                         .writer_deadline_timer
-                                        .set_timeout(duration, (eid, duration));
-                                    self.writer_deadline_timeout.insert(eid, to);
+                                        .set_timeout(duration, (eid, ih, duration));
+                                    self.writer_deadline_timeout.insert((eid, ih), to);
                                 } else {
                                     unreachable!();
                                 }

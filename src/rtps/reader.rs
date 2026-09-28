@@ -16,7 +16,7 @@ use crate::message::submessage::{
     submessage_flag::HeartbeatFlag,
 };
 use crate::network::udp_sender::UdpSender;
-use crate::rtps::cache::{CacheChangeIng, HCKey, HistoryCache, HistoryCacheType};
+use crate::rtps::cache::{CacheChangeIng, HCKey, HistoryCache, HistoryCacheType, InstanceHandle};
 use crate::structure::{
     Duration, EntityId, GuidPrefix, RTPSEntity, ReaderProxy, TopicKind, WriterProxy, GUID,
 };
@@ -34,8 +34,8 @@ use mio_extras::channel as mio_channel;
 use speedy::{Endianness, Readable, Writable};
 
 pub enum ReaderTimer {
-    Heartbeat(EntityId, GUID),              // self.entity_id, Writer GUID
-    Deadline(EntityId, GUID, CoreDuration), // self.entity_id, Writer GUID, deadline.period
+    Heartbeat(EntityId, GUID), // self.entity_id, Writer GUID
+    Deadline(EntityId, InstanceHandle, GUID, CoreDuration), // self.entity_id, InstanceHandle, Writer GUID, deadline.period
     Lifespan(EntityId, HCKey, Timestamp, CoreDuration), // self.entity_id, HCKey of the change, source Timestamp, lifespan.period
 }
 
@@ -235,11 +235,16 @@ where
 
             let deadline_period = self.qos.deadline().period;
             if deadline_period != Duration::INFINITE {
-                rt = Some(ReaderTimer::Deadline(
-                    self.guid.entity_id,
-                    remote_writer_guid,
-                    deadline_period.into(),
-                ));
+                if !self.is_keyed() {
+                    rt = Some(ReaderTimer::Deadline(
+                        self.guid.entity_id,
+                        InstanceHandle::HANDLE_NO_KEY,
+                        remote_writer_guid,
+                        deadline_period.into(),
+                    ));
+                } else {
+                    rt = None;
+                }
             } else {
                 rt = None;
             }
@@ -304,24 +309,6 @@ where
         };
         let deadline_period = self.qos.deadline().period;
         let mut rt: Vec<ReaderTimer> = Vec::new();
-        if lifespan.0 != Duration::INFINITE {
-            rt.push(ReaderTimer::Lifespan(
-                self.entity_id(),
-                HCKey {
-                    guid: writer_guid,
-                    seq_num: change_ing.sequence_number,
-                },
-                change_ing.timestamp,
-                lifespan.0.into(),
-            ))
-        }
-        if deadline_period != Duration::INFINITE {
-            rt.push(ReaderTimer::Deadline(
-                self.guid.entity_id,
-                writer_guid,
-                deadline_period.into(),
-            ));
-        }
         // TODO: deserialize received data and calclate KeyHash
         let key_hash = match change_ing.key_hash {
             Some(kh) => kh,
@@ -353,7 +340,29 @@ where
                 None => KeyHash::ZERO,
             },
         };
-        let ih = self.reader_cache.write().key_hash2instance_handle(key_hash);
+        let ih = self
+            .reader_cache
+            .write()
+            .key_hash2instance_handle(key_hash, self.qos.resource_limits());
+        if lifespan.0 != Duration::INFINITE {
+            rt.push(ReaderTimer::Lifespan(
+                self.entity_id(),
+                HCKey {
+                    guid: writer_guid,
+                    seq_num: change_ing.sequence_number,
+                },
+                change_ing.timestamp,
+                lifespan.0.into(),
+            ))
+        }
+        if deadline_period != Duration::INFINITE {
+            rt.push(ReaderTimer::Deadline(
+                self.guid.entity_id,
+                ih,
+                writer_guid,
+                deadline_period.into(),
+            ));
+        }
         let change = change_ing.gen_cache_change(ih);
         if self.is_reliable() {
             // Reliable Reader Behavior
@@ -812,6 +821,10 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static> Reader<R> {
             ReliabilityQosKind::Reliable => true,
             ReliabilityQosKind::BestEffort => false,
         }
+    }
+
+    pub fn is_keyed(&self) -> bool {
+        R::is_with_key()
     }
 
     fn matched_writer_unmatch(&mut self, guid: GUID) {
