@@ -1,3 +1,4 @@
+use crate::dds::InstanceState;
 use crate::dds::{
     qos::DataReaderQosPolicies,
     sample::{DataSample, SampleInfo},
@@ -11,6 +12,7 @@ use crate::rtps::{
 };
 use crate::structure::GUID;
 use crate::DdsData;
+use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use awkernel_sync::rwlock::RwLock;
 use core::marker::PhantomData;
@@ -84,7 +86,8 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
         );
         let mut hc = self.rhc.write();
         let (keys, changes) = hc.get_ready_changes();
-        let samples = self.deserialize_changes(changes);
+        let instance_states = hc.read_instance_state();
+        let samples = self.deserialize_changes(changes, instance_states);
         for key in keys.iter() {
             hc.remove_change(key, true);
         }
@@ -100,16 +103,21 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
         );
         let mut hc = self.rhc.write();
         let (keys, changes) = hc.get_ready_instance_changes(instance_handle);
-        let samples = self.deserialize_changes(changes);
+        let instance_states = hc.read_instance_state();
+        let samples = self.deserialize_changes(changes, instance_states);
         for key in keys.iter() {
             hc.remove_change(key, true);
         }
         samples
     }
 
-    fn deserialize_changes(&self, changes: Vec<&CacheChange>) -> Vec<DataSample<R>> {
+    fn deserialize_changes(
+        &self,
+        changes: Vec<&CacheChange>,
+        instance_states: &BTreeMap<InstanceHandle, InstanceState>,
+    ) -> Vec<DataSample<R>> {
         let mut v: Vec<DataSample<R>> = Vec::new();
-        for (d, ts, ih, ir) in changes
+        for (d, ts, ih, ir, is) in changes
             .iter()
             // .filter(|change| change.data_value().is_some())
             .map(|change| {
@@ -118,6 +126,7 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
                     change.timestamp,
                     change.instance_handle,
                     change.is_read,
+                    *instance_states.get(&change.instance_handle).expect("TODO"),
                 )
             })
         {
@@ -138,14 +147,16 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
                     }
                 };
                 match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
-                    Ok(data) => v.push(DataSample::new(Some(data), SampleInfo::new(ir, ts, ih))),
+                    Ok(data) => {
+                        v.push(DataSample::new(Some(data), SampleInfo::new(ir, is, ts, ih)))
+                    }
                     Err(e) => error!(
                         "DataReader failed to deserialize: '{}'\n\tDataReader: {}\n\tTopic: {}",
                         e, self._reader_guid, self.topic
                     ),
                 }
             } else {
-                v.push(DataSample::new(None, SampleInfo::new(ir, ts, ih)));
+                v.push(DataSample::new(None, SampleInfo::new(ir, is, ts, ih)));
             }
         }
         v

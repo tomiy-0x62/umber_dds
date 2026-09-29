@@ -7,7 +7,7 @@ pub mod key;
 mod participant;
 mod publisher;
 pub mod qos;
-mod sample;
+pub(crate) mod sample;
 mod subscriber;
 pub(crate) mod tokens;
 mod topic;
@@ -23,6 +23,7 @@ pub use {
         DEFAULT_PARTICIPANT_MESSAGE_PERIOD,
     },
     publisher::Publisher,
+    sample::InstanceState,
     subscriber::Subscriber,
     topic::Topic,
 };

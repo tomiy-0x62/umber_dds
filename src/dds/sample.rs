@@ -27,6 +27,7 @@ pub enum SampleState {
     NotRead,
 }
 
+#[derive(Clone, Copy)]
 pub enum InstanceState {
     Alive,
     NotAliveDisposed,
@@ -41,7 +42,7 @@ pub enum ViewState {
 pub struct SampleInfo {
     pub sample_state: SampleState,
     // pub view_state: ViewState,
-    // pub instance_state: InstanceState,
+    pub instance_state: InstanceState,
     pub source_timestamp: Timestamp,
     pub instance_handle: InstanceHandle,
 }
@@ -49,6 +50,7 @@ pub struct SampleInfo {
 impl SampleInfo {
     pub(crate) fn new(
         is_read: bool,
+        instance_state: InstanceState,
         source_ts: Timestamp,
         instance_handle: InstanceHandle,
     ) -> Self {
@@ -58,6 +60,7 @@ impl SampleInfo {
             } else {
                 SampleState::NotRead
             },
+            instance_state,
             source_timestamp: source_ts,
             instance_handle,
         }

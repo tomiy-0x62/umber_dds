@@ -1,7 +1,8 @@
 use crate::dds::key::KeyHash;
 use crate::dds::qos::policy::{History, HistoryQosKind, ResourceLimits, LENGTH_UNLIMITED};
+use crate::dds::sample::InstanceState;
 use crate::message::submessage::element::{
-    ParameterList, SequenceNumber, SerializedPayload, Timestamp,
+    InlineQos, ParameterList, SequenceNumber, SerializedPayload, Timestamp,
 };
 use crate::structure::GUID;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -290,6 +291,7 @@ pub(crate) struct HistoryCache {
     max_seq_num: Option<SequenceNumber>,
     next_ih: u32,
     keyhash_instancehandle: BiMap<KeyHash, InstanceHandle>,
+    instance_state: BTreeMap<InstanceHandle, InstanceState>,
 }
 
 // life cycle of CacheChange on WriterCache
@@ -318,6 +320,7 @@ impl HistoryCache {
             max_seq_num: None,
             next_ih: 0x10,
             keyhash_instancehandle: BiMap::new(),
+            instance_state: BTreeMap::new(),
         }
     }
     pub fn key_hash2instance_handle(
@@ -335,6 +338,7 @@ impl HistoryCache {
             }
             let ih = InstanceHandle::new(self.next_ih);
             self.keyhash_instancehandle.insert(keyhash, ih);
+            self.instance_state.insert(ih, InstanceState::Alive);
             self.next_ih += 1;
             ih
         }
@@ -546,6 +550,10 @@ impl HistoryCache {
         } else {
             unreachable!();
         }
+    }
+
+    pub(crate) fn read_instance_state(&self) -> &BTreeMap<InstanceHandle, InstanceState> {
+        &self.instance_state
     }
 
     pub fn get_ready_changes(&self) -> (Vec<HCKey>, Vec<&CacheChange>) {
