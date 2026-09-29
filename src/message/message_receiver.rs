@@ -450,6 +450,15 @@ impl MessageReceiver {
         let _reader_guid = GUID::new(self.dest_guid_prefix, data.reader_id);
 
         // TODO: check inlineQos is valid
+
+        if flag.contains(DataFlag::Data) && flag.contains(DataFlag::Key) {
+            // RTPS v2.5 spec, 9.4.5.4.1 Flags in the Submessage Header
+            // + D=1 and K=1 is an invalid combination in this version of the protocol
+            return Err(MessageError::Error(
+                "invalied DATA submessage: Key flag and Data flag is set.".to_string(),
+            ));
+        }
+
         let data_key = if flag.contains(DataFlag::Key) && !flag.contains(DataFlag::Data) {
             // the serializedPayload element is interpreted as the value of the key that identifies the registered instance of the data-object.
             let sp = &data
