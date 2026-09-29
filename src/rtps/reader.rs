@@ -1,6 +1,7 @@
 use crate::dds::{
     key::KeyHash,
     qos::{policy::ReliabilityQosKind, DataReaderQosPolicies, DataWriterQosPolicies},
+    sample::InstanceState,
     Topic,
 };
 use crate::discovery::{
@@ -11,12 +12,14 @@ use crate::message::message_builder::MessageBuilder;
 use crate::message::submessage::{
     element::{
         Gap, Heartbeat, Locator, RepresentationIdentifier, SequenceNumber, SequenceNumberSet,
-        Timestamp,
+        StatusInfoFlag, Timestamp,
     },
     submessage_flag::HeartbeatFlag,
 };
 use crate::network::udp_sender::UdpSender;
-use crate::rtps::cache::{CacheChangeIng, HCKey, HistoryCache, HistoryCacheType, InstanceHandle};
+use crate::rtps::cache::{
+    CacheChangeIng, DataKind, HCKey, HistoryCache, HistoryCacheType, InstanceHandle,
+};
 use crate::structure::{
     Duration, EntityId, GuidPrefix, RTPSEntity, ReaderProxy, TopicKind, WriterProxy, GUID,
 };
@@ -277,6 +280,10 @@ where
         source_guid_prefix: GuidPrefix,
         change_ing: CacheChangeIng,
     ) -> Option<Vec<ReaderTimer>> {
+        if change_ing.data_kind == DataKind::Key {
+            error!("Reader added change whose data_kind is Key");
+            return None;
+        }
         let writer_guid = GUID::new(source_guid_prefix, change_ing.writer_guid.entity_id);
         if let Some(wp) = self.unmatched_writers.remove(&writer_guid) {
             debug!(
@@ -309,36 +316,42 @@ where
         };
         let deadline_period = self.qos.deadline().period;
         let mut rt: Vec<ReaderTimer> = Vec::new();
-        // TODO: deserialize received data and calclate KeyHash
         let key_hash = match change_ing.key_hash {
             Some(kh) => kh,
-            None => match change_ing.data_value() {
-                Some(data) => {
-                    let received_bytes = data.to_bytes();
-                    let encapsulation_kind =
-                        RepresentationIdentifier::new([received_bytes[0], received_bytes[1]]);
-                    let _encapsulation_option = [received_bytes[2], received_bytes[3]];
-                    let endianness =
-                        match encapsulation_kind {
-                            RepresentationIdentifier::CDR_LE
-                            | RepresentationIdentifier::PL_CDR_LE => Endianness::LittleEndian,
-                            RepresentationIdentifier::CDR_BE
-                            | RepresentationIdentifier::PL_CDR_BE => Endianness::BigEndian,
-                            rep => {
-                                let bytes = rep.bytes();
-                                panic!(
-                                    "unexpected encapsulation_kind: [0x{:02x}, 0x{:02x}]",
-                                    bytes[0], bytes[1]
-                                );
+            None => {
+                if change_ing.data_kind == DataKind::Data {
+                    match change_ing.data_value() {
+                        Some(data) => {
+                            let received_bytes = data.to_bytes();
+                            let encapsulation_kind = RepresentationIdentifier::new([
+                                received_bytes[0],
+                                received_bytes[1],
+                            ]);
+                            let _encapsulation_option = [received_bytes[2], received_bytes[3]];
+                            let endianness = match encapsulation_kind {
+                                RepresentationIdentifier::CDR_LE
+                                | RepresentationIdentifier::PL_CDR_LE => Endianness::LittleEndian,
+                                RepresentationIdentifier::CDR_BE
+                                | RepresentationIdentifier::PL_CDR_BE => Endianness::BigEndian,
+                                rep => {
+                                    let bytes = rep.bytes();
+                                    panic!(
+                                        "unexpected encapsulation_kind: [0x{:02x}, 0x{:02x}]",
+                                        bytes[0], bytes[1]
+                                    );
+                                }
+                            };
+                            match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
+                                Ok(d) => d.gen_key().unwrap_or(KeyHash::ZERO),
+                                Err(_e) => KeyHash::ZERO,
                             }
-                        };
-                    match R::read_from_buffer_with_ctx(endianness, &received_bytes[4..]) {
-                        Ok(d) => d.gen_key().unwrap_or(KeyHash::ZERO),
-                        Err(_e) => KeyHash::ZERO,
+                        }
+                        None => KeyHash::ZERO,
                     }
+                } else {
+                    KeyHash::ZERO
                 }
-                None => KeyHash::ZERO,
-            },
+            }
         };
         let ih = self
             .reader_cache
@@ -364,6 +377,22 @@ where
             ));
         }
         let change = change_ing.gen_cache_change(ih);
+        if let Some(iq) = change.inline_qos {
+            if let Some(si) = iq.status_info {
+                if si.contains(StatusInfoFlag::Disposed) {
+                    self.reader_cache
+                        .write()
+                        .update_instance_state(ih, InstanceState::NotAliveDisposed);
+                } else if si.contains(StatusInfoFlag::Unregistered) {
+                    self.reader_cache
+                        .write()
+                        .update_instance_state(ih, InstanceState::NotAliveNoWriters);
+                };
+            }
+        }
+        if change.data_kind != DataKind::Data {
+            return if rt.is_empty() { None } else { Some(rt) };
+        }
         if self.is_reliable() {
             // Reliable Reader Behavior
             if let Err(e) = self.reader_cache.write().add_change(

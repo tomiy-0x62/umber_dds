@@ -177,7 +177,7 @@ impl MessageBuilder {
         if let Some(iq) = cache_change.inline_qos.as_ref() {
             data_flag |= DataFlag::InlineQos;
             have_inline_qos = true;
-            for param in &iq.parameters {
+            for param in &iq.as_parameter_list().parameters {
                 match param.parameter_id {
                     ParameterId::PID_STATUS_INFO => {
                         inline_qos_params.add_parameter(param.clone());

@@ -145,12 +145,12 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
 
     pub(crate) fn write_data_ud(&mut self, guid: GUID) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
-        let mut inlie_qos = InlineQos::empty();
+        let mut inline_qos = InlineQos::empty();
         let mut si = BitFlags::<StatusInfoFlag>::empty();
         si |= StatusInfoFlag::Unregistered;
         si |= StatusInfoFlag::Disposed;
-        inlie_qos.status_info = Some(si);
-        let param_list = inlie_qos.as_parameter_list();
+        inline_qos.status_info = Some(si);
+        let param_list = inline_qos.as_parameter_list();
         let mut data_key = DataKey::empty();
         if guid.entity_id.entity_kind() == EntityKind::PARTICIPANT_BUILT_IN {
             data_key.participant_guid = Some(guid);
@@ -177,7 +177,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         data_kind: DataKind,
         key_hash: Option<KeyHash>,
         inc_seq_num: bool,
-        inlie_qos: Option<ParameterList>,
+        inline_qos: Option<ParameterList>,
     ) {
         if inc_seq_num {
             self.last_change_sequence_number += SequenceNumber(1);
@@ -203,7 +203,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             ts,
             Some(serialized_payload),
             data_kind,
-            inlie_qos,
+            inline_qos.and_then(|i| InlineQos::from_parameter_list(&i).ok()),
             instance_handle,
         );
         loop {

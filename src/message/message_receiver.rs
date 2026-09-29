@@ -488,12 +488,12 @@ impl MessageReceiver {
         } else {
             DataKey::empty()
         };
-        let inline_qos;
+        let inline_qos: Option<InlineQos>;
         if flag.contains(DataFlag::InlineQos) {
             // the inlineQos element contains QoS values that override those of the RTPS Writer and should
             // be used to process the update. For a complete list of possible in-line QoS parameters, see Table 8.80.
             if let Some(param_list) = &data.inline_qos {
-                inline_qos = InlineQos::from_parameter_list(param_list)?;
+                inline_qos = Some(InlineQos::from_parameter_list(param_list)?);
             } else {
                 return Err(MessageError::Error(
                     "received DATA with InlineQosFlag is set but not contains inlineQos"
@@ -501,7 +501,7 @@ impl MessageReceiver {
                 ));
             }
         } else {
-            inline_qos = InlineQos::empty();
+            inline_qos = None;
         }
 
         // Fast DDS 3.6.2:
@@ -521,7 +521,7 @@ impl MessageReceiver {
             // the serializedPayload element is interpreted as the value of the dtat-object
         }
 
-        let key_hash = inline_qos.key_hash;
+        let key_hash = inline_qos.unwrap_or(InlineQos::empty()).key_hash;
 
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let data_kind = if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
@@ -538,7 +538,7 @@ impl MessageReceiver {
             ts,
             data.serialized_payload.clone(),
             data_kind,
-            data.inline_qos.clone(),
+            inline_qos,
             key_hash,
         );
 
@@ -550,7 +550,7 @@ impl MessageReceiver {
                 data,
                 flag.contains(DataFlag::Data),
                 change,
-                inline_qos,
+                inline_qos.unwrap_or(InlineQos::empty()),
                 data_key,
                 writers,
                 readers,
@@ -564,7 +564,7 @@ impl MessageReceiver {
                 flag.contains(DataFlag::Data),
                 change,
                 ts,
-                inline_qos,
+                inline_qos.unwrap_or(InlineQos::empty()),
                 data_key,
                 readers,
             )?;
@@ -576,7 +576,7 @@ impl MessageReceiver {
                 data,
                 flag.contains(DataFlag::Data),
                 change,
-                inline_qos,
+                inline_qos.unwrap_or(InlineQos::empty()),
                 data_key,
                 writers,
                 readers,

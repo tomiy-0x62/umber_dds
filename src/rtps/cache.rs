@@ -2,7 +2,7 @@ use crate::dds::key::KeyHash;
 use crate::dds::qos::policy::{History, HistoryQosKind, ResourceLimits, LENGTH_UNLIMITED};
 use crate::dds::sample::InstanceState;
 use crate::message::submessage::element::{
-    InlineQos, ParameterList, SequenceNumber, SerializedPayload, Timestamp,
+    InlineQos, SequenceNumber, SerializedPayload, Timestamp,
 };
 use crate::structure::GUID;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -31,7 +31,7 @@ pub struct CacheChange {
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
     pub data_kind: DataKind,
-    pub inline_qos: Option<ParameterList>,
+    pub inline_qos: Option<InlineQos>,
     // In DDS, the value of the fields
     // labeled as ‘key’ within the data
     // uniquely identify each data-
@@ -49,7 +49,7 @@ impl CacheChange {
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
         data_kind: DataKind,
-        inline_qos: Option<ParameterList>,
+        inline_qos: Option<InlineQos>,
         instance_handle: InstanceHandle,
     ) -> Self {
         Self {
@@ -77,8 +77,8 @@ pub struct CacheChangeIng {
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
-    data_kind: DataKind,
-    inline_qos: Option<ParameterList>,
+    pub data_kind: DataKind,
+    inline_qos: Option<InlineQos>,
     pub key_hash: Option<KeyHash>,
 }
 
@@ -91,7 +91,7 @@ impl CacheChangeIng {
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
         data_kind: DataKind,
-        inline_qos: Option<ParameterList>,
+        inline_qos: Option<InlineQos>,
         key_hash: Option<KeyHash>,
     ) -> Self {
         Self {
@@ -550,6 +550,14 @@ impl HistoryCache {
         } else {
             unreachable!();
         }
+    }
+
+    pub(crate) fn update_instance_state(
+        &mut self,
+        instance_handle: InstanceHandle,
+        instance_state: InstanceState,
+    ) {
+        self.instance_state.insert(instance_handle, instance_state);
     }
 
     pub(crate) fn read_instance_state(&self) -> &BTreeMap<InstanceHandle, InstanceState> {
