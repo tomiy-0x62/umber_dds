@@ -344,21 +344,15 @@ impl Writer {
                     }
                 };
                 if change_for_reader.is_relevant {
-                    if let std::collections::btree_map::Entry::Vacant(e) =
-                        to_send_data.entry(seq_num)
-                    {
-                        e.insert(vec![(reader_guid, locator_list)]);
-                    } else {
-                        let vec = to_send_data.get_mut(&seq_num).unwrap();
-                        vec.push((reader_guid, locator_list));
-                    }
-                } else if let std::collections::btree_map::Entry::Vacant(e) =
-                    to_send_gap.entry(seq_num)
-                {
-                    e.insert(vec![(reader_guid, locator_list)]);
+                    to_send_data
+                        .entry(seq_num)
+                        .or_default()
+                        .push((reader_guid, locator_list));
                 } else {
-                    let vec = to_send_gap.get_mut(&seq_num).unwrap();
-                    vec.push((reader_guid, locator_list));
+                    to_send_gap
+                        .entry(seq_num)
+                        .or_default()
+                        .push((reader_guid, locator_list));
                 }
             }
         }
@@ -647,21 +641,15 @@ impl Writer {
                     }
                 };
                 if change.is_relevant {
-                    if let std::collections::btree_map::Entry::Vacant(e) =
-                        to_send_data.entry(seq_num)
-                    {
-                        e.insert(vec![(reader_guid, locator_list)]);
-                    } else {
-                        let vec = to_send_data.get_mut(&seq_num).unwrap();
-                        vec.push((reader_guid, locator_list));
-                    }
-                } else if let std::collections::btree_map::Entry::Vacant(e) =
-                    to_send_gap.entry(seq_num)
-                {
-                    e.insert(vec![(reader_guid, locator_list)]);
+                    to_send_data
+                        .entry(seq_num)
+                        .or_default()
+                        .push((reader_guid, locator_list));
                 } else {
-                    let vec = to_send_gap.get_mut(&seq_num).unwrap();
-                    vec.push((reader_guid, locator_list));
+                    to_send_gap
+                        .entry(seq_num)
+                        .or_default()
+                        .push((reader_guid, locator_list));
                 }
             }
         } else {
