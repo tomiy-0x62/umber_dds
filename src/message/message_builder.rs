@@ -183,8 +183,12 @@ impl MessageBuilder {
                         inline_qos_params.add_parameter(param.clone());
                         inline_qos_len += 8;
                     }
+                    ParameterId::PID_KEY_HASH => {
+                        inline_qos_params.add_parameter(param.clone());
+                        inline_qos_len += 20;
+                    }
                     pid => panic!(
-                        "MessageBuilder receive unkown inlineQos whose pid is {:02x}",
+                        "MessageBuilder receive unkown inlineQos whose pid is 0x{:02x}",
                         pid.value
                     ),
                 }

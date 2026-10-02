@@ -209,8 +209,6 @@ impl Writer {
                     }
                 }
                 WriterCmd::AssertLiveliness => self.assert_liveliness_manually(),
-                WriterCmd::SendUnregisterMessage(handle) => self.send_unregister_message(handle),
-                WriterCmd::SendDisposeMessage(handle) => self.send_dispose_message(handle),
             }
         }
         if wtv.is_empty() {
@@ -220,14 +218,6 @@ impl Writer {
         }
     }
 
-    pub fn send_unregister_message(&mut self, _handle: InstanceHandle) {
-        // TODO: DATA(w[U_])を送信
-        todo!();
-    }
-    pub fn send_dispose_message(&mut self, _handle: InstanceHandle) {
-        // TODO: keyedなら自身の持っているインスタンス数分だけ、DATA([_D])を送信
-        todo!();
-    }
     pub fn assert_liveliness(&mut self) {
         self.is_alive = true;
         let ld = self.qos.liveliness().lease_duration;
@@ -1176,7 +1166,5 @@ pub(crate) struct WriterIngredients {
 }
 pub enum WriterCmd {
     WriteData,
-    SendUnregisterMessage(InstanceHandle),
-    SendDisposeMessage(InstanceHandle),
     AssertLiveliness,
 }

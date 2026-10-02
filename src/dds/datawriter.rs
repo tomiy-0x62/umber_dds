@@ -22,7 +22,7 @@ use awkernel_sync::rwlock::RwLock;
 use core::marker::PhantomData;
 use core::time::Duration as CoreDuration;
 use enumflags2::BitFlags;
-use log::{info, trace, warn};
+use log::{error, info, trace, warn};
 use mio_extras::channel as mio_channel;
 use mio_v06::{event::Evented, Poll, PollOpt, Ready, Token};
 use speedy::{Endianness, Writable};
@@ -101,19 +101,48 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         let key_hash = data.gen_key();
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::CDR_LE);
-        self.writer_data_to_hc(ts, serialized_payload, DataKind::Data, key_hash, true, None);
+        self.writer_data_to_hc(
+            ts,
+            Some(serialized_payload),
+            DataKind::Data,
+            key_hash,
+            true,
+            None,
+        );
     }
 
-    pub fn unregister_instance(&self, handle: InstanceHandle) {
-        self.writer_command_sender
-            .send(WriterCmd::SendUnregisterMessage(handle))
-            .expect("failed to send WriterCmd via channel 'writer_command_sender'");
+    /// + data: specifies the instance to unregister. Provide the data associated with the target instance.
+    pub fn unregister_instance(&mut self, data: W) {
+        if !self.is_keyed {
+            error!("no_key DataWriter::dispose() called");
+            return;
+        }
+        let kh = data.gen_key().unwrap();
+        let ts = Timestamp::now().expect("failed to get Timestamp::now()");
+        let mut inline_qos = InlineQos::empty();
+        inline_qos.key_hash = Some(kh);
+        let mut si = BitFlags::<StatusInfoFlag>::empty();
+        si |= StatusInfoFlag::Unregistered;
+        inline_qos.status_info = Some(si);
+        let param_list = inline_qos.as_parameter_list();
+        self.writer_data_to_hc(ts, None, DataKind::Empty, None, true, Some(param_list));
     }
 
-    pub fn dispose(&self, handle: InstanceHandle) {
-        self.writer_command_sender
-            .send(WriterCmd::SendDisposeMessage(handle))
-            .expect("failed to send WriterCmd via channel 'writer_command_sender'");
+    /// + data: specifies the instance to dispose. Provide the data associated with the target instance.
+    pub fn dispose(&mut self, data: W) {
+        if !self.is_keyed {
+            error!("no_key DataWriter::dispose() called");
+            return;
+        }
+        let kh = data.gen_key().unwrap();
+        let ts = Timestamp::now().expect("failed to get Timestamp::now()");
+        let mut inline_qos = InlineQos::empty();
+        inline_qos.key_hash = Some(kh);
+        let mut si = BitFlags::<StatusInfoFlag>::empty();
+        si |= StatusInfoFlag::Disposed;
+        inline_qos.status_info = Some(si);
+        let param_list = inline_qos.as_parameter_list();
+        self.writer_data_to_hc(ts, None, DataKind::Empty, None, true, Some(param_list));
     }
 
     /// + inc_seq_num: whether the seq_num needs to be incremented.
@@ -124,7 +153,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::PL_CDR_LE);
         self.writer_data_to_hc(
             ts,
-            serialized_payload,
+            Some(serialized_payload),
             DataKind::Data,
             key_hash,
             inc_seq_num,
@@ -140,7 +169,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         inc_seq_num: bool,
     ) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
-        self.writer_data_to_hc(ts, data, DataKind::Data, key_hash, inc_seq_num, None);
+        self.writer_data_to_hc(ts, Some(data), DataKind::Data, key_hash, inc_seq_num, None);
     }
 
     pub(crate) fn write_data_ud(&mut self, guid: GUID) {
@@ -162,7 +191,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         info!("write DATA [UD] of {}", guid);
         self.writer_data_to_hc(
             ts,
-            serialized_payload,
+            Some(serialized_payload),
             DataKind::Key,
             None,
             true,
@@ -173,7 +202,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
     fn writer_data_to_hc(
         &mut self,
         ts: Timestamp,
-        serialized_payload: SerializedPayload,
+        serialized_payload: Option<SerializedPayload>,
         data_kind: DataKind,
         key_hash: Option<KeyHash>,
         inc_seq_num: bool,
@@ -201,7 +230,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             self.writer_guid,
             self.last_change_sequence_number,
             ts,
-            Some(serialized_payload),
+            serialized_payload,
             data_kind,
             inline_qos.and_then(|i| InlineQos::from_parameter_list(&i).ok()),
             instance_handle,
