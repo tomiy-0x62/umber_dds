@@ -446,18 +446,19 @@ impl EventLoop {
                                     wguid
                                 );
                                 if let Some(reader) = self.readers.get(&reid) {
-                                    // TODO:
-                                    // `ih`の表すインスタンスの状態を確認し、有効でなければdeadline_missedの通知をせず、timerもセットしない。
-                                    reader.notify_reqested_deadline_missed(wguid);
-                                    trace!(
-                                        "set Reader Deadline timer({:?})\n\tReader: {}",
-                                        duration,
-                                        reid,
-                                    );
-                                    let to = self
-                                        .reader_deadline_timer
-                                        .set_timeout(duration, ((reid, ih, wguid), duration));
-                                    self.reader_deadline_timeout.insert((reid, ih, wguid), to);
+                                    // Checks the state of the instance represented by `ih`. If it is not alive, it stops the timer without triggering a `deadline_missed` notification.
+                                    if reader.is_matched_writer_instance_alive(wguid, ih) {
+                                        reader.notify_reqested_deadline_missed(wguid);
+                                        trace!(
+                                            "set Reader Deadline timer({:?})\n\tReader: {}",
+                                            duration,
+                                            reid,
+                                        );
+                                        let to = self
+                                            .reader_deadline_timer
+                                            .set_timeout(duration, ((reid, ih, wguid), duration));
+                                        self.reader_deadline_timeout.insert((reid, ih, wguid), to);
+                                    }
                                 } else {
                                     unreachable!();
                                 }
@@ -486,16 +487,19 @@ impl EventLoop {
                             {
                                 trace!("fired Writer Deadline timer\n\tWriter: {}", eid);
                                 if let Some(writer) = self.writers.get(&eid) {
-                                    writer.notify_offered_deadline_missed();
-                                    trace!(
-                                        "set Writer Deadline timer({:?})\n\tWriter: {}",
-                                        duration,
-                                        eid,
-                                    );
-                                    let to = self
-                                        .writer_deadline_timer
-                                        .set_timeout(duration, (eid, ih, duration));
-                                    self.writer_deadline_timeout.insert((eid, ih), to);
+                                    // Checks the state of the instance represented by `ih`. If it is not alive, it stops the timer without triggering a `deadline_missed` notification.
+                                    if writer.is_instance_alive(ih) {
+                                        writer.notify_offered_deadline_missed();
+                                        trace!(
+                                            "set Writer Deadline timer({:?})\n\tWriter: {}",
+                                            duration,
+                                            eid,
+                                        );
+                                        let to = self
+                                            .writer_deadline_timer
+                                            .set_timeout(duration, (eid, ih, duration));
+                                        self.writer_deadline_timeout.insert((eid, ih), to);
+                                    }
                                 } else {
                                     unreachable!();
                                 }
@@ -844,10 +848,10 @@ impl EventLoop {
 
     fn remove_discoverd_participant(&mut self, participant_guidp: GuidPrefix) {
         for r in self.readers.values_mut() {
-            r.delete_writer_proxy(participant_guidp);
+            r.delete_writer_proxy_with_prefix(participant_guidp);
         }
         for w in self.writers.values_mut() {
-            w.delete_reader_proxy(participant_guidp);
+            w.delete_reader_proxy_with_prefix(participant_guidp);
         }
     }
 }

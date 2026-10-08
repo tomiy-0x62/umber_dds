@@ -857,11 +857,11 @@ impl MessageReceiver {
                     let mut found = false;
                     for r in readers.values_mut() {
                         found = true;
-                        r.delete_writer_proxy(target_guid.guid_prefix)
+                        r.delete_writer_proxy(target_guid)
                     }
                     for w in writers.values_mut() {
                         found = true;
-                        w.delete_reader_proxy(target_guid.guid_prefix)
+                        w.delete_reader_proxy(target_guid)
                     }
                     if !found {
                         warn!(
@@ -1010,7 +1010,7 @@ impl MessageReceiver {
                 for reader in readers.values_mut() {
                     if reader.is_contain_writer(target_guid) {
                         found = true;
-                        reader.delete_writer_proxy(target_guid.guid_prefix);
+                        reader.delete_writer_proxy(target_guid);
                     }
                 }
                 if !found {
@@ -1165,7 +1165,7 @@ impl MessageReceiver {
                 for writer in writers.values_mut() {
                     if writer.is_contain_reader(target_guid) {
                         found = true;
-                        writer.delete_reader_proxy(target_guid.guid_prefix);
+                        writer.delete_reader_proxy(target_guid);
                     }
                 }
                 if !found {

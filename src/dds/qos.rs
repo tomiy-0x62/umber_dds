@@ -1076,7 +1076,7 @@ pub mod policy {
         }
     }
 
-    #[derive(Clone, Copy, Debug, PartialEq)]
+    #[derive(Clone, Copy, Debug, PartialEq, PartialOrd, Eq, Ord)]
     pub struct OwnershipStrength(pub i32);
     #[allow(clippy::derivable_impls)]
     impl Default for OwnershipStrength {

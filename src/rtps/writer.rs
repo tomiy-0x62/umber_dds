@@ -13,7 +13,8 @@ use crate::discovery::{
 use crate::message::{
     message_builder::MessageBuilder,
     submessage::element::{
-        AckNack, Count, Locator, SequenceNumber, SequenceNumberSet, SerializedPayload, Timestamp,
+        AckNack, Count, InlineQos, Locator, SequenceNumber, SequenceNumberSet, SerializedPayload,
+        StatusInfoFlag, Timestamp,
     },
 };
 use crate::network::udp_sender::UdpSender;
@@ -349,19 +350,16 @@ impl Writer {
         for seq_num in to_send_data.keys() {
             if let Some(aa_change) = self.writer_cache.read().get_change(self.guid, *seq_num) {
                 if deadline_period != Duration::INFINITE {
-                    if self.is_keyed {
-                        wt.push(WriterTimer::Deadline(
-                            self.guid.entity_id,
-                            aa_change.instance_handle,
-                            deadline_period.into(),
-                        ));
+                    let ih = if self.is_keyed {
+                        aa_change.instance_handle
                     } else {
-                        wt.push(WriterTimer::Deadline(
-                            self.guid.entity_id,
-                            InstanceHandle::HANDLE_NO_KEY,
-                            deadline_period.into(),
-                        ));
-                    }
+                        InstanceHandle::HANDLE_NO_KEY
+                    };
+                    wt.push(WriterTimer::Deadline(
+                        self.guid.entity_id,
+                        ih,
+                        deadline_period.into(),
+                    ));
                 }
                 let reader_locators = to_send_data.get(seq_num).unwrap();
                 let send_list = Self::min_message_cover(reader_locators);
@@ -440,10 +438,13 @@ impl Writer {
         locator: Vec<Locator>,
     ) {
         let time_stamp = Timestamp::now().expect("failed to get Timestamp::now()");
-        let ih = self.writer_cache.write().key_hash2instance_handle(
-            builtin_data_kh.unwrap_or(KeyHash::ZERO),
-            self.qos.resource_limits(),
-        );
+        let ih = {
+            let mut w = self.writer_cache.write();
+
+            let key_hash = builtin_data_kh.unwrap_or(KeyHash::ZERO);
+            w.key_hash2instance_handle(key_hash)
+                .unwrap_or(w.writer_register_instance(key_hash, self.qos.resource_limits()))
+        };
         let a_change = CacheChange::new(
             ChangeKind::Alive,
             self.guid,
@@ -1014,6 +1015,12 @@ impl Writer {
         }
     }
 
+    pub fn is_instance_alive(&self, instance_handle: InstanceHandle) -> bool {
+        self.writer_cache
+            .read()
+            .is_alive_local_instance(instance_handle)
+    }
+
     pub fn notify_offered_deadline_missed(&self) {
         self.writer_state_notifier
             .send(DataWriterStatusChanged::OfferedDeadlineMissed)
@@ -1046,7 +1053,20 @@ impl Writer {
             .expect("failed to send data via chennel 'writer_state_notifier'");
     }
 
-    pub fn delete_reader_proxy(&mut self, guid_prefix: GuidPrefix) {
+    pub fn delete_reader_proxy(&mut self, guid: GUID) {
+        let to_delete: Vec<GUID> = self
+            .matched_readers
+            .keys()
+            .filter(|k| **k == guid)
+            .copied()
+            .collect();
+
+        for d in to_delete {
+            self.matched_reader_remove(d);
+        }
+    }
+
+    pub fn delete_reader_proxy_with_prefix(&mut self, guid_prefix: GuidPrefix) {
         let to_delete: Vec<GUID> = self
             .matched_readers
             .keys()

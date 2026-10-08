@@ -49,7 +49,13 @@ enum ReaderState {
 }
 
 pub trait RtpsReader: Any + Send {
-    fn delete_writer_proxy(&mut self, guid_prefix: GuidPrefix);
+    fn delete_writer_proxy(&mut self, guid: GUID);
+    fn delete_writer_proxy_with_prefix(&mut self, guid_prefix: GuidPrefix);
+    fn is_matched_writer_instance_alive(
+        &self,
+        writer_guid: GUID,
+        instance_handle: InstanceHandle,
+    ) -> bool;
     fn get_guid(&self) -> GUID;
     fn topic_kind(&self) -> TopicKind;
     fn heartbeat_response_delay(&self) -> CoreDuration;
@@ -98,7 +104,31 @@ impl<R> RtpsReader for Reader<R>
 where
     R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static,
 {
-    fn delete_writer_proxy(&mut self, guid_prefix: GuidPrefix) {
+    fn delete_writer_proxy(&mut self, guid: GUID) {
+        let to_delete: Vec<GUID> = self
+            .matched_writers
+            .keys()
+            .filter(|k| **k == guid)
+            .copied()
+            .collect();
+
+        for d in to_delete {
+            self.matched_writer_remove(d);
+        }
+        let to_delete: Vec<GUID> = self
+            .unmatched_writers
+            .keys()
+            .filter(|k| **k == guid)
+            .copied()
+            .collect();
+
+        for d in to_delete {
+            self.unmatched_writer_remove(d);
+        }
+
+        self.reader_cache.write().remove_writer(guid);
+    }
+    fn delete_writer_proxy_with_prefix(&mut self, guid_prefix: GuidPrefix) {
         let to_delete: Vec<GUID> = self
             .matched_writers
             .keys()
@@ -108,6 +138,7 @@ where
 
         for d in to_delete {
             self.matched_writer_remove(d);
+            self.reader_cache.write().remove_writer(d)
         }
         let to_delete: Vec<GUID> = self
             .unmatched_writers
@@ -118,7 +149,17 @@ where
 
         for d in to_delete {
             self.unmatched_writer_remove(d);
+            self.reader_cache.write().remove_writer(d)
         }
+    }
+    fn is_matched_writer_instance_alive(
+        &self,
+        writer_guid: GUID,
+        instance_handle: InstanceHandle,
+    ) -> bool {
+        self.reader_cache
+            .read()
+            .is_alive_remote_writer_instance(writer_guid, instance_handle)
     }
     fn get_guid(&self) -> GUID {
         self.guid
@@ -353,10 +394,23 @@ where
                 }
             }
         };
-        let ih = self
-            .reader_cache
-            .write()
-            .key_hash2instance_handle(key_hash, self.qos.resource_limits());
+        let ih = {
+            let mut w = self.reader_cache.write();
+            w.key_hash2instance_handle(key_hash).unwrap_or(
+                w.reader_register_instance(
+                    key_hash,
+                    InstanceState::Alive,
+                    writer_guid,
+                    self.qos.ownership(),
+                    self.matched_writers
+                        .get(&writer_guid)
+                        .unwrap()
+                        .qos
+                        .ownership_strength(),
+                    self.qos.resource_limits(),
+                ),
+            )
+        };
         if lifespan.0 != Duration::INFINITE {
             rt.push(ReaderTimer::Lifespan(
                 self.entity_id(),
@@ -380,13 +434,17 @@ where
         if let Some(iq) = change.inline_qos {
             if let Some(si) = iq.status_info {
                 if si.contains(StatusInfoFlag::Disposed) {
-                    self.reader_cache
-                        .write()
-                        .update_instance_state(ih, InstanceState::NotAliveDisposed);
+                    self.reader_cache.write().update_remote_instance_state(
+                        ih,
+                        InstanceState::NotAliveDisposed,
+                        writer_guid,
+                    );
                 } else if si.contains(StatusInfoFlag::Unregistered) {
-                    self.reader_cache
-                        .write()
-                        .update_instance_state(ih, InstanceState::NotAliveNoWriters);
+                    self.reader_cache.write().update_remote_instance_state(
+                        ih,
+                        InstanceState::NotAliveNoWriters,
+                        writer_guid,
+                    );
                 };
             }
         }

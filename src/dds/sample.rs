@@ -27,7 +27,7 @@ pub enum SampleState {
     NotRead,
 }
 
-#[derive(Clone, Copy)]
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub enum InstanceState {
     Alive,
     NotAliveDisposed,

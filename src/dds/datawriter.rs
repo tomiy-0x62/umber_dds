@@ -5,6 +5,7 @@ use crate::dds::{
         policy::{LivelinessQosKind, ReliabilityQosKind},
         DataWriterQosPolicies,
     },
+    sample::InstanceState,
     topic::Topic,
 };
 use crate::message::message_receiver::DataKey;
@@ -118,6 +119,13 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             return;
         }
         let kh = data.gen_key().unwrap();
+        {
+            let mut w = self.whc.write();
+            let ih = w
+                .key_hash2instance_handle(kh)
+                .unwrap_or(w.writer_register_instance(kh, self.qos.resource_limits()));
+            w.update_local_instance_state(ih, InstanceState::NotAliveNoWriters);
+        }
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let mut inline_qos = InlineQos::empty();
         inline_qos.key_hash = Some(kh);
@@ -135,6 +143,13 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             return;
         }
         let kh = data.gen_key().unwrap();
+        {
+            let mut w = self.whc.write();
+            let ih = w
+                .key_hash2instance_handle(kh)
+                .unwrap_or(w.writer_register_instance(kh, self.qos.resource_limits()));
+            w.update_local_instance_state(ih, InstanceState::NotAliveDisposed);
+        }
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let mut inline_qos = InlineQos::empty();
         inline_qos.key_hash = Some(kh);
@@ -215,9 +230,9 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         }
         let instance_handle = if self.is_keyed {
             if let Some(kh) = key_hash {
-                self.whc
-                    .write()
-                    .key_hash2instance_handle(kh, self.qos.resource_limits())
+                let mut w = self.whc.write();
+                w.key_hash2instance_handle(kh)
+                    .unwrap_or(w.writer_register_instance(kh, self.qos.resource_limits()))
             } else {
                 InstanceHandle::HANDLE_NO_DATA
             }
