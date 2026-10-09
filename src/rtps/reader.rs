@@ -396,20 +396,21 @@ where
         };
         let ih = {
             let mut w = self.reader_cache.write();
-            w.key_hash2instance_handle(key_hash).unwrap_or(
-                w.reader_register_instance(
-                    key_hash,
-                    InstanceState::Alive,
-                    writer_guid,
-                    self.qos.ownership(),
-                    self.matched_writers
-                        .get(&writer_guid)
-                        .unwrap()
-                        .qos
-                        .ownership_strength(),
-                    self.qos.resource_limits(),
-                ),
-            )
+            w.key_hashw2instance_handle(key_hash, writer_guid)
+                .unwrap_or(
+                    w.reader_register_instance(
+                        key_hash,
+                        InstanceState::Alive,
+                        writer_guid,
+                        self.qos.ownership(),
+                        self.matched_writers
+                            .get(&writer_guid)
+                            .unwrap()
+                            .qos
+                            .ownership_strength(),
+                        self.qos.resource_limits(),
+                    ),
+                )
         };
         if lifespan.0 != Duration::INFINITE {
             rt.push(ReaderTimer::Lifespan(

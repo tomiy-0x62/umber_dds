@@ -96,20 +96,34 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         self.qos = qos;
     }
 
+    fn key_hash2instance_handle(&mut self, key_hash: Option<KeyHash>) -> InstanceHandle {
+        if self.is_keyed {
+            if let Some(kh) = key_hash {
+                let mut w = self.whc.write();
+                w.key_hash2instance_handle(kh)
+                    .unwrap_or(w.writer_register_instance(kh, self.qos.resource_limits()))
+            } else {
+                InstanceHandle::HANDLE_NO_DATA
+            }
+        } else {
+            InstanceHandle::HANDLE_NO_KEY
+        }
+    }
+
     /// publish data for matching DataReader
     pub fn write(&mut self, data: &W) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let key_hash = data.gen_key();
+        let ih = self.key_hash2instance_handle(key_hash);
+        {
+            let mut w = self.whc.write();
+            if !w.is_alive_local_instance(ih) {
+                w.update_local_instance_state(ih, InstanceState::Alive);
+            }
+        }
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::CDR_LE);
-        self.writer_data_to_hc(
-            ts,
-            Some(serialized_payload),
-            DataKind::Data,
-            key_hash,
-            true,
-            None,
-        );
+        self.writer_data_to_hc(ts, Some(serialized_payload), DataKind::Data, ih, true, None);
     }
 
     /// + data: specifies the instance to unregister. Provide the data associated with the target instance.
@@ -119,11 +133,9 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             return;
         }
         let kh = data.gen_key().unwrap();
+        let ih = self.key_hash2instance_handle(Some(kh));
         {
             let mut w = self.whc.write();
-            let ih = w
-                .key_hash2instance_handle(kh)
-                .unwrap_or(w.writer_register_instance(kh, self.qos.resource_limits()));
             w.update_local_instance_state(ih, InstanceState::NotAliveNoWriters);
         }
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
@@ -133,7 +145,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         si |= StatusInfoFlag::Unregistered;
         inline_qos.status_info = Some(si);
         let param_list = inline_qos.as_parameter_list();
-        self.writer_data_to_hc(ts, None, DataKind::Empty, None, true, Some(param_list));
+        self.writer_data_to_hc(ts, None, DataKind::Empty, ih, true, Some(param_list));
     }
 
     /// + data: specifies the instance to dispose. Provide the data associated with the target instance.
@@ -143,12 +155,11 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             return;
         }
         let kh = data.gen_key().unwrap();
+        let ih = self.key_hash2instance_handle(Some(kh));
         {
-            let mut w = self.whc.write();
-            let ih = w
-                .key_hash2instance_handle(kh)
-                .unwrap_or(w.writer_register_instance(kh, self.qos.resource_limits()));
-            w.update_local_instance_state(ih, InstanceState::NotAliveDisposed);
+            self.whc
+                .write()
+                .update_local_instance_state(ih, InstanceState::NotAliveDisposed);
         }
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let mut inline_qos = InlineQos::empty();
@@ -157,20 +168,21 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         si |= StatusInfoFlag::Disposed;
         inline_qos.status_info = Some(si);
         let param_list = inline_qos.as_parameter_list();
-        self.writer_data_to_hc(ts, None, DataKind::Empty, None, true, Some(param_list));
+        self.writer_data_to_hc(ts, None, DataKind::Empty, ih, true, Some(param_list));
     }
 
     /// + inc_seq_num: whether the seq_num needs to be incremented.
     pub(crate) fn write_builtin_data(&mut self, data: &W, inc_seq_num: bool) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let key_hash = data.gen_key();
+        let ih = self.key_hash2instance_handle(key_hash);
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::PL_CDR_LE);
         self.writer_data_to_hc(
             ts,
             Some(serialized_payload),
             DataKind::Data,
-            key_hash,
+            ih,
             inc_seq_num,
             None,
         );
@@ -184,7 +196,8 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         inc_seq_num: bool,
     ) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
-        self.writer_data_to_hc(ts, Some(data), DataKind::Data, key_hash, inc_seq_num, None);
+        let ih = self.key_hash2instance_handle(key_hash);
+        self.writer_data_to_hc(ts, Some(data), DataKind::Data, ih, inc_seq_num, None);
     }
 
     pub(crate) fn write_data_ud(&mut self, guid: GUID) {
@@ -208,7 +221,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             ts,
             Some(serialized_payload),
             DataKind::Key,
-            None,
+            InstanceHandle::HANDLE_NO_DATA,
             true,
             Some(param_list),
         );
@@ -219,7 +232,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         ts: Timestamp,
         serialized_payload: Option<SerializedPayload>,
         data_kind: DataKind,
-        key_hash: Option<KeyHash>,
+        instance_handle: InstanceHandle,
         inc_seq_num: bool,
         inline_qos: Option<ParameterList>,
     ) {
@@ -228,17 +241,6 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         } else if self.last_change_sequence_number == SequenceNumber(0) {
             self.last_change_sequence_number = SequenceNumber(1);
         }
-        let instance_handle = if self.is_keyed {
-            if let Some(kh) = key_hash {
-                let mut w = self.whc.write();
-                w.key_hash2instance_handle(kh)
-                    .unwrap_or(w.writer_register_instance(kh, self.qos.resource_limits()))
-            } else {
-                InstanceHandle::HANDLE_NO_DATA
-            }
-        } else {
-            InstanceHandle::HANDLE_NO_KEY
-        };
 
         let a_change = CacheChange::new(
             ChangeKind::Alive,

@@ -9,7 +9,7 @@ use crate::message::submessage::element::{
 use crate::structure::GUID;
 use alloc::collections::{BTreeMap, BTreeSet};
 use bimap::BiMap;
-use log::{debug, warn};
+use log::{debug, info, warn};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -337,7 +337,25 @@ impl HistoryCache {
         }
     }
     pub fn key_hash2instance_handle(&mut self, keyhash: KeyHash) -> Option<InstanceHandle> {
+        assert_eq!(self.hc_type, HistoryCacheType::Writer);
         self.keyhash_instancehandle.get_by_left(&keyhash).copied()
+    }
+    pub fn key_hashw2instance_handle(
+        &mut self,
+        keyhash: KeyHash,
+        writer_guid: GUID,
+    ) -> Option<InstanceHandle> {
+        assert_eq!(self.hc_type, HistoryCacheType::Reader);
+        if let Some(instance_handle) = self.keyhash_instancehandle.get_by_left(&keyhash) {
+            if let Some(v) = self.remote_writer_instance_state.get(instance_handle) {
+                for wi in v {
+                    if wi.writer_guid == writer_guid {
+                        return Some(*instance_handle);
+                    }
+                }
+            }
+        }
+        None
     }
     pub fn writer_register_instance(
         &mut self,
@@ -370,30 +388,35 @@ impl HistoryCache {
         resource_limits: ResourceLimits,
     ) -> InstanceHandle {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
-        if let Some(ih) = self.keyhash_instancehandle.get_by_left(&keyhash) {
+        let max_instance = resource_limits.max_instance as usize;
+        let instance_num = self.keyhash_instancehandle.len();
+        if instance_num > max_instance - 1 {
+            unimplemented!("reached ResourceLimits.max_instance");
+        }
+        let ih = if let Some(ih) = self.keyhash_instancehandle.get_by_left(&keyhash) {
             *ih
         } else {
-            let max_instance = resource_limits.max_instance as usize;
-            let instance_num = self.keyhash_instancehandle.len();
-            if instance_num > max_instance - 1 {
-                unimplemented!("reached ResourceLimits.max_instance");
-            }
             let ih = InstanceHandle::new(self.next_ih);
-            self.keyhash_instancehandle.insert(keyhash, ih);
-            self.instance_state.insert(ih, InstanceState::Alive);
-            let wi = WtierInstanceInfo {
-                writer_guid,
-                owner_ship,
-                owner_ship_strength,
-                instance_state,
-            };
-            self.remote_writer_instance_state
-                .entry(ih)
-                .or_default()
-                .push(wi);
             self.next_ih += 1;
             ih
-        }
+        };
+        self.keyhash_instancehandle.insert(keyhash, ih);
+        self.instance_state.insert(ih, InstanceState::Alive);
+        let wi = WtierInstanceInfo {
+            writer_guid,
+            owner_ship,
+            owner_ship_strength,
+            instance_state,
+        };
+        self.remote_writer_instance_state
+            .entry(ih)
+            .or_default()
+            .push(wi);
+        info!(
+            "HistoryCache register (Writer, InstanceHandle)\n\tWriter: {}\n\t{}",
+            writer_guid, ih
+        );
+        ih
     }
     pub fn is_alive_remote_writer_instance(
         &self,
@@ -430,6 +453,7 @@ impl HistoryCache {
                     }
                     if wi.instance_state == InstanceState::Alive {
                         target_strength = Some(wi.owner_ship_strength);
+                        most_strong = core::cmp::max(wi.owner_ship_strength, most_strong);
                     } else {
                         return false;
                     }
@@ -449,8 +473,12 @@ impl HistoryCache {
     }
     pub fn remove_writer(&mut self, writer_guid: GUID) {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
-        for v in self.remote_writer_instance_state.values_mut() {
+        for (&ih, v) in self.remote_writer_instance_state.iter_mut() {
             v.retain(|info| info.writer_guid != writer_guid);
+            if v.is_empty() {
+                self.instance_state
+                    .insert(ih, InstanceState::NotAliveDisposed);
+            }
         }
     }
     pub fn add_empty_change(&mut self, guid: GUID) {
@@ -474,6 +502,29 @@ impl HistoryCache {
         let seq_num = change.sequence_number;
         let key = HCKey::new(change.writer_guid, seq_num);
         let ih = change.instance_handle;
+        if self.hc_type == HistoryCacheType::Reader {
+            let mut owner_ship = None;
+            if let Some(wi) = self.remote_writer_instance_state.get_mut(&ih) {
+                for w in wi {
+                    if w.writer_guid == change.writer_guid {
+                        owner_ship = Some(w.owner_ship);
+                        w.instance_state = InstanceState::Alive;
+                        self.instance_state.insert(ih, InstanceState::Alive);
+                    }
+                }
+            }
+            if let Some(os) = owner_ship {
+                if os == Ownership::Exclusive && !self.is_owner(change.writer_guid, ih) {
+                    // not owner, do nothing
+                    return Ok(());
+                }
+            } else {
+                unreachable!(
+                    "attempt add_change to HistoryCache unkown instance\n\tWriter: {}\n\t{}",
+                    change.writer_guid, ih
+                );
+            }
+        }
         assert_ne!(ih, InstanceHandle::HANDLE_NIL);
         if let Some(c) = self.changes.get(&key) {
             if c.data_value == change.data_value {
@@ -673,11 +724,29 @@ impl HistoryCache {
             "update_remote_instance_state: {:?}, {:?}",
             instance_handle, instance_state
         );
-        self.instance_state.insert(instance_handle, instance_state);
+        if instance_state == InstanceState::NotAliveDisposed
+            || instance_state == InstanceState::Alive
+        {
+            self.instance_state.insert(instance_handle, instance_state);
+        }
         if let Some(v) = self.remote_writer_instance_state.get_mut(&instance_handle) {
+            let mut alive = false;
             for wi in v.iter_mut() {
                 if wi.writer_guid == writer_guid {
                     wi.instance_state = instance_state
+                } else {
+                    if wi.instance_state == InstanceState::Alive {
+                        alive = true;
+                    }
+                }
+            }
+            if instance_state == InstanceState::NotAliveNoWriters {
+                if alive {
+                    self.instance_state
+                        .insert(instance_handle, InstanceState::Alive);
+                } else {
+                    self.instance_state
+                        .insert(instance_handle, InstanceState::NotAliveNoWriters);
                 }
             }
         } else {
