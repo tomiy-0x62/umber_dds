@@ -277,6 +277,9 @@ impl Writer {
                 return if wt.is_empty() { None } else { Some(wt) };
             }
         };
+
+        let deadline_period = self.qos.deadline().period;
+
         for (i, seq_num) in seq_nums.iter().rev().enumerate() {
             for reader_proxy in self.matched_readers.values_mut() {
                 reader_proxy.update_cache_state(
@@ -298,12 +301,24 @@ impl Writer {
                     },
                 )
             }
+            if let Some(aa_change) = self.writer_cache.read().get_change(self.guid, *seq_num) {
+                if deadline_period != Duration::INFINITE {
+                    let ih = if self.is_keyed {
+                        aa_change.instance_handle
+                    } else {
+                        InstanceHandle::HANDLE_NO_KEY
+                    };
+                    wt.push(WriterTimer::Deadline(
+                        self.guid.entity_id,
+                        ih,
+                        deadline_period.into(),
+                    ));
+                }
+            }
         }
         if self.is_reliable() {
             self.remove_acked_changes(oldest_unprocessed);
         }
-
-        let deadline_period = self.qos.deadline().period;
 
         let self_guid = self.guid();
         let self_guid_prefix = self.guid_prefix();
@@ -349,18 +364,6 @@ impl Writer {
         }
         for seq_num in to_send_data.keys() {
             if let Some(aa_change) = self.writer_cache.read().get_change(self.guid, *seq_num) {
-                if deadline_period != Duration::INFINITE {
-                    let ih = if self.is_keyed {
-                        aa_change.instance_handle
-                    } else {
-                        InstanceHandle::HANDLE_NO_KEY
-                    };
-                    wt.push(WriterTimer::Deadline(
-                        self.guid.entity_id,
-                        ih,
-                        deadline_period.into(),
-                    ));
-                }
                 let reader_locators = to_send_data.get(seq_num).unwrap();
                 let send_list = Self::min_message_cover(reader_locators);
                 for (reid, loc) in send_list {
