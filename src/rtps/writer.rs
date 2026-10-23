@@ -13,8 +13,7 @@ use crate::discovery::{
 use crate::message::{
     message_builder::MessageBuilder,
     submessage::element::{
-        AckNack, Count, InlineQos, Locator, SequenceNumber, SequenceNumberSet, SerializedPayload,
-        StatusInfoFlag, Timestamp,
+        AckNack, Count, Locator, SequenceNumber, SequenceNumberSet, SerializedPayload, Timestamp,
     },
 };
 use crate::network::udp_sender::UdpSender;

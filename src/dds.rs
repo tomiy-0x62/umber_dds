@@ -23,7 +23,7 @@ pub use {
         DEFAULT_PARTICIPANT_MESSAGE_PERIOD,
     },
     publisher::Publisher,
-    sample::InstanceState,
+    sample::InstanceStateKind,
     subscriber::Subscriber,
     topic::Topic,
 };

@@ -2,7 +2,7 @@ use crate::dds::key::KeyHash;
 use crate::dds::qos::policy::{
     History, HistoryQosKind, Ownership, OwnershipStrength, ResourceLimits, LENGTH_UNLIMITED,
 };
-use crate::dds::sample::InstanceState;
+use crate::dds::sample::{InstanceStateKind, SampleInfo};
 use crate::message::submessage::element::{
     InlineQos, SequenceNumber, SerializedPayload, Timestamp,
 };
@@ -273,7 +273,7 @@ struct WtierInstanceInfo {
     writer_guid: GUID,
     owner_ship: Ownership,
     owner_ship_strength: OwnershipStrength,
-    instance_state: InstanceState,
+    instance_state: InstanceStateKind,
 }
 
 pub(crate) struct HistoryCache {
@@ -304,6 +304,25 @@ pub(crate) struct HistoryCache {
     instance_state: BTreeMap<InstanceHandle, InstanceState>,
     // only use type Reader
     remote_writer_instance_state: BTreeMap<InstanceHandle, Vec<WtierInstanceInfo>>,
+}
+
+#[derive(Clone, Copy)]
+struct InstanceState {
+    state: InstanceStateKind,
+    viewed: bool,
+    disposed_generation_count: i32,
+    no_writers_generation_count: i32,
+}
+
+impl InstanceState {
+    fn new() -> Self {
+        Self {
+            state: InstanceStateKind::Alive,
+            viewed: false,
+            disposed_generation_count: 0,
+            no_writers_generation_count: 0,
+        }
+    }
 }
 
 // life cycle of CacheChange on WriterCache
@@ -340,6 +359,12 @@ impl HistoryCache {
         assert_eq!(self.hc_type, HistoryCacheType::Writer);
         self.keyhash_instancehandle.get_by_left(&keyhash).copied()
     }
+
+    /// Checks whether the specified Writer is registered as the sender of the target instance, and retrieves the corresponding `InstanceHandle`.
+    ///
+    /// **Returns**
+    /// - `Some(InstanceHandle)` if the Writer with the specified GUID is registered as the sender of the instance associated with the specified KeyHash.
+    /// - `None` if the target instance is registered in the `HistoryCache` but the specified Writer is not registered as its sender (or if the instance does not exist).
     pub fn key_hashw2instance_handle(
         &mut self,
         keyhash: KeyHash,
@@ -373,7 +398,8 @@ impl HistoryCache {
             }
             let ih = InstanceHandle::new(self.next_ih);
             self.keyhash_instancehandle.insert(keyhash, ih);
-            self.instance_state.insert(ih, InstanceState::Alive);
+            debug!("writer_register_instance: {}", ih);
+            self.instance_state.insert(ih, InstanceState::new());
             self.next_ih += 1;
             ih
         }
@@ -381,7 +407,7 @@ impl HistoryCache {
     pub fn reader_register_instance(
         &mut self,
         keyhash: KeyHash,
-        instance_state: InstanceState,
+        instance_state: InstanceStateKind,
         writer_guid: GUID,
         owner_ship: Ownership,
         owner_ship_strength: OwnershipStrength,
@@ -401,7 +427,10 @@ impl HistoryCache {
             ih
         };
         self.keyhash_instancehandle.insert(keyhash, ih);
-        self.instance_state.insert(ih, InstanceState::Alive);
+        debug!("reader_register_instance: {}", ih);
+        self.instance_state
+            .entry(ih)
+            .or_insert_with(InstanceState::new);
         let wi = WtierInstanceInfo {
             writer_guid,
             owner_ship,
@@ -427,7 +456,7 @@ impl HistoryCache {
         if let Some(v) = self.remote_writer_instance_state.get(&instance_handle) {
             for wi in v {
                 if wi.writer_guid == writer_guid {
-                    return wi.instance_state == InstanceState::Alive;
+                    return wi.instance_state == InstanceStateKind::Alive;
                 }
             }
         }
@@ -436,7 +465,7 @@ impl HistoryCache {
     pub fn is_alive_local_instance(&self, instance_handle: InstanceHandle) -> bool {
         assert_eq!(self.hc_type, HistoryCacheType::Writer);
         if let Some(&state) = self.instance_state.get(&instance_handle) {
-            state == InstanceState::Alive
+            state.state == InstanceStateKind::Alive
         } else {
             false
         }
@@ -451,14 +480,14 @@ impl HistoryCache {
                     if wi.owner_ship == Ownership::Shared {
                         return true;
                     }
-                    if wi.instance_state == InstanceState::Alive {
+                    if wi.instance_state == InstanceStateKind::Alive {
                         target_strength = Some(wi.owner_ship_strength);
                         most_strong = core::cmp::max(wi.owner_ship_strength, most_strong);
                     } else {
                         return false;
                     }
                 } else {
-                    if wi.instance_state == InstanceState::Alive {
+                    if wi.instance_state == InstanceStateKind::Alive {
                         most_strong = core::cmp::max(wi.owner_ship_strength, most_strong);
                     }
                 }
@@ -476,8 +505,11 @@ impl HistoryCache {
         for (&ih, v) in self.remote_writer_instance_state.iter_mut() {
             v.retain(|info| info.writer_guid != writer_guid);
             if v.is_empty() {
-                self.instance_state
-                    .insert(ih, InstanceState::NotAliveDisposed);
+                if let Some(is) = self.instance_state.get_mut(&ih) {
+                    is.state = InstanceStateKind::NotAliveNoWriters
+                } else {
+                    unreachable!();
+                }
             }
         }
     }
@@ -508,8 +540,20 @@ impl HistoryCache {
                 for w in wi {
                     if w.writer_guid == change.writer_guid {
                         owner_ship = Some(w.owner_ship);
-                        w.instance_state = InstanceState::Alive;
-                        self.instance_state.insert(ih, InstanceState::Alive);
+                        w.instance_state = InstanceStateKind::Alive;
+                        if let Some(is) = self.instance_state.get_mut(&ih) {
+                            match is.state {
+                                InstanceStateKind::Alive => (),
+                                InstanceStateKind::NotAliveDisposed => {
+                                    is.state = InstanceStateKind::Alive;
+                                    is.disposed_generation_count += 1;
+                                }
+                                InstanceStateKind::NotAliveNoWriters => {
+                                    is.state = InstanceStateKind::Alive;
+                                    is.no_writers_generation_count += 1;
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -713,10 +757,35 @@ impl HistoryCache {
         }
     }
 
+    pub(crate) fn mark_change_read(&mut self, key: &HCKey) {
+        assert_eq!(self.hc_type, HistoryCacheType::Reader);
+        debug!("mark_change_read: {}", key);
+        if let Some(change) = self.changes.get_mut(key) {
+            change.is_read = true;
+        } else {
+            unreachable!("attempt to mark_change_read to unkown CacheChange: {}", key);
+        }
+    }
+
+    pub(crate) fn update_remote_instance_view_state(
+        &mut self,
+        instance_handle: InstanceHandle,
+        viewed: bool,
+    ) {
+        assert_eq!(self.hc_type, HistoryCacheType::Reader);
+        debug!(
+            "update_remote_instance_view_state: {:?}, {}",
+            instance_handle, viewed
+        );
+        if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+            is.viewed = viewed;
+        }
+    }
+
     pub(crate) fn update_remote_instance_state(
         &mut self,
         instance_handle: InstanceHandle,
-        instance_state: InstanceState,
+        instance_state: InstanceStateKind,
         writer_guid: GUID,
     ) {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
@@ -724,29 +793,66 @@ impl HistoryCache {
             "update_remote_instance_state: {:?}, {:?}",
             instance_handle, instance_state
         );
-        if instance_state == InstanceState::NotAliveDisposed
-            || instance_state == InstanceState::Alive
-        {
-            self.instance_state.insert(instance_handle, instance_state);
+        // update view_state
+        if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+            if is.state == InstanceStateKind::Alive && instance_state != InstanceStateKind::Alive {
+                is.viewed = false;
+            }
+        }
+        if instance_state == InstanceStateKind::NotAliveDisposed {
+            if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+                is.state = instance_state;
+            }
+        }
+        if instance_state == InstanceStateKind::Alive {
+            if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+                match is.state {
+                    InstanceStateKind::Alive => (),
+                    InstanceStateKind::NotAliveDisposed => {
+                        is.state = InstanceStateKind::Alive;
+                        is.disposed_generation_count += 1;
+                    }
+                    InstanceStateKind::NotAliveNoWriters => {
+                        is.state = InstanceStateKind::Alive;
+                        is.no_writers_generation_count += 1;
+                    }
+                }
+            }
         }
         if let Some(v) = self.remote_writer_instance_state.get_mut(&instance_handle) {
-            let mut alive = false;
+            let mut instance_alive = false;
             for wi in v.iter_mut() {
                 if wi.writer_guid == writer_guid {
                     wi.instance_state = instance_state
                 } else {
-                    if wi.instance_state == InstanceState::Alive {
-                        alive = true;
+                    if wi.instance_state == InstanceStateKind::Alive {
+                        instance_alive = true;
                     }
                 }
             }
-            if instance_state == InstanceState::NotAliveNoWriters {
-                if alive {
-                    self.instance_state
-                        .insert(instance_handle, InstanceState::Alive);
+            if instance_state == InstanceStateKind::NotAliveNoWriters {
+                if instance_alive {
+                    if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+                        match is.state {
+                            InstanceStateKind::Alive => (),
+                            InstanceStateKind::NotAliveDisposed => {
+                                is.state = InstanceStateKind::Alive;
+                                is.disposed_generation_count += 1;
+                            }
+                            InstanceStateKind::NotAliveNoWriters => {
+                                is.state = InstanceStateKind::Alive;
+                                is.no_writers_generation_count += 1;
+                            }
+                        }
+                    } else {
+                        unreachable!();
+                    }
                 } else {
-                    self.instance_state
-                        .insert(instance_handle, InstanceState::NotAliveNoWriters);
+                    if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+                        is.state = InstanceStateKind::NotAliveNoWriters;
+                    } else {
+                        unreachable!();
+                    }
                 }
             }
         } else {
@@ -757,18 +863,35 @@ impl HistoryCache {
     pub(crate) fn update_local_instance_state(
         &mut self,
         instance_handle: InstanceHandle,
-        instance_state: InstanceState,
+        instance_state: InstanceStateKind,
     ) {
         assert_eq!(self.hc_type, HistoryCacheType::Writer);
         debug!(
             "update_local_instance_state: {:?}, {:?}",
             instance_handle, instance_state
         );
-        self.instance_state.insert(instance_handle, instance_state);
+        if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+            is.state = instance_state;
+        } else {
+            unreachable!();
+        }
     }
 
-    pub(crate) fn read_instance_state(&self) -> &BTreeMap<InstanceHandle, InstanceState> {
-        &self.instance_state
+    pub(crate) fn change2sample_info(&self, change: &CacheChange) -> SampleInfo {
+        if let Some(is) = self.instance_state.get(&change.instance_handle) {
+            SampleInfo::new(
+                change.is_read,
+                is.viewed,
+                is.state,
+                change.data_value.is_some(),
+                change.timestamp,
+                change.instance_handle,
+                is.disposed_generation_count,
+                is.no_writers_generation_count,
+            )
+        } else {
+            unreachable!()
+        }
     }
 
     pub fn get_ready_changes(&self) -> (Vec<HCKey>, Vec<&CacheChange>) {

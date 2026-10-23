@@ -22,47 +22,66 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataSample<R> {
     }
 }
 
-pub enum SampleState {
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum SampleStateKind {
     Read,
     NotRead,
 }
 
 #[derive(PartialEq, Clone, Copy, Debug)]
-pub enum InstanceState {
+pub enum InstanceStateKind {
     Alive,
     NotAliveDisposed,
     NotAliveNoWriters,
 }
 
-pub enum ViewState {
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum ViewStateKind {
     New,
     NotNew,
 }
 
+#[derive(PartialEq, Clone, Copy, Debug)]
 pub struct SampleInfo {
-    pub sample_state: SampleState,
-    // pub view_state: ViewState,
-    pub instance_state: InstanceState,
+    pub sample_state: SampleStateKind,
+    pub view_state: ViewStateKind,
+    pub instance_state: InstanceStateKind,
+    pub valid_data: bool,
     pub source_timestamp: Timestamp,
     pub instance_handle: InstanceHandle,
+    pub disposed_generation_count: i32,
+    pub no_writers_generation_count: i32,
 }
 
 impl SampleInfo {
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn new(
         is_read: bool,
-        instance_state: InstanceState,
+        viewed: bool,
+        instance_state: InstanceStateKind,
+        valid_data: bool,
         source_ts: Timestamp,
         instance_handle: InstanceHandle,
+        disposed_generation_count: i32,
+        no_writers_generation_count: i32,
     ) -> Self {
         Self {
             sample_state: if is_read {
-                SampleState::Read
+                SampleStateKind::Read
             } else {
-                SampleState::NotRead
+                SampleStateKind::NotRead
+            },
+            view_state: if viewed {
+                ViewStateKind::NotNew
+            } else {
+                ViewStateKind::New
             },
             instance_state,
+            valid_data,
             source_timestamp: source_ts,
             instance_handle,
+            disposed_generation_count,
+            no_writers_generation_count,
         }
     }
 }

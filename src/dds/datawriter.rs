@@ -5,7 +5,7 @@ use crate::dds::{
         policy::{LivelinessQosKind, ReliabilityQosKind},
         DataWriterQosPolicies,
     },
-    sample::InstanceState,
+    sample::InstanceStateKind,
     topic::Topic,
 };
 use crate::message::message_receiver::DataKey;
@@ -118,7 +118,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         {
             let mut w = self.whc.write();
             if !w.is_alive_local_instance(ih) {
-                w.update_local_instance_state(ih, InstanceState::Alive);
+                w.update_local_instance_state(ih, InstanceStateKind::Alive);
             }
         }
         let serialized_payload =
@@ -136,7 +136,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         let ih = self.key_hash2instance_handle(Some(kh));
         {
             let mut w = self.whc.write();
-            w.update_local_instance_state(ih, InstanceState::NotAliveNoWriters);
+            w.update_local_instance_state(ih, InstanceStateKind::NotAliveNoWriters);
         }
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let mut inline_qos = InlineQos::empty();
@@ -159,7 +159,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         {
             self.whc
                 .write()
-                .update_local_instance_state(ih, InstanceState::NotAliveDisposed);
+                .update_local_instance_state(ih, InstanceStateKind::NotAliveDisposed);
         }
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let mut inline_qos = InlineQos::empty();

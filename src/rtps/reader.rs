@@ -1,7 +1,7 @@
 use crate::dds::{
     key::KeyHash,
     qos::{policy::ReliabilityQosKind, DataReaderQosPolicies, DataWriterQosPolicies},
-    sample::InstanceState,
+    sample::InstanceStateKind,
     Topic,
 };
 use crate::discovery::{
@@ -400,7 +400,7 @@ where
                 .unwrap_or(
                     w.reader_register_instance(
                         key_hash,
-                        InstanceState::Alive,
+                        InstanceStateKind::Alive,
                         writer_guid,
                         self.qos.ownership(),
                         self.matched_writers
@@ -437,13 +437,13 @@ where
                 if si.contains(StatusInfoFlag::Disposed) {
                     self.reader_cache.write().update_remote_instance_state(
                         ih,
-                        InstanceState::NotAliveDisposed,
+                        InstanceStateKind::NotAliveDisposed,
                         writer_guid,
                     );
                 } else if si.contains(StatusInfoFlag::Unregistered) {
                     self.reader_cache.write().update_remote_instance_state(
                         ih,
-                        InstanceState::NotAliveNoWriters,
+                        InstanceStateKind::NotAliveNoWriters,
                         writer_guid,
                     );
                 };
