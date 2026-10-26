@@ -873,7 +873,9 @@ impl HistoryCache {
         if let Some(is) = self.instance_state.get_mut(&instance_handle) {
             is.state = instance_state;
         } else {
-            unreachable!();
+            // only reache here the Writer is no_key
+            self.instance_state
+                .insert(instance_handle, InstanceState::new());
         }
     }
 
