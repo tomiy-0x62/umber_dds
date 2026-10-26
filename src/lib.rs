@@ -1,5 +1,9 @@
 //! An experimental Rust implementation of Data Distribution Service.
 //!
+//! Umber DDS uses an event-driven design based on mio's poll mechanism.
+//! DDS applications register DataReaders, DataWriters, timers, and other objects
+//! with poll and implement handlers for the events they receive.
+//!
 //! # Notice
 //! Explicitly sending shutdown message of DataWriter, DataReader, and DomainParticipant
 //! allows the corresponding entities to be unmatched immediately,without waiting for the lease to expire,
@@ -46,6 +50,7 @@
 //! // use speedy::Writable; // only required if one or more `#[key]` attributes are specified to DdsData
 //! use umber_dds::{DdsData, DdsSerialize, KeyHash};
 //!
+//! // Define the data to publish as a struct and implement the DdsData and DdsSerialize traits.
 //! #[derive(Clone, Debug, DdsData, DdsSerialize)]
 //! struct HelloWorld {
 //!     index: u32,
@@ -56,20 +61,21 @@
 //!     let now = SystemTime::now()
 //!         .duration_since(SystemTime::UNIX_EPOCH)
 //!         .unwrap();
+//!     // DomainParticipant needs SmallRng to generate a participant-specific ID (GUID prefix).
 //!     let mut small_rng = rand::rngs::SmallRng::seed_from_u64(now.as_nanos() as u64);
 //!
 //!     let domain_id = 0;
 //!     let participant = DomainParticipant::new(
 //!         domain_id,
-//!         vec![Ipv4Addr::new(127, 0, 0, 1)],
-//!         None,
+//!         vec![Ipv4Addr::new(127, 0, 0, 1)], // NIC to use
+//!         None, // Use the default configuration when no ParticipantConfig is specified.
 //!         &mut small_rng,
 //!     );
 //!     let topic_qos = TopicQosBuilder::new()
 //!         .reliability(policy::Reliability::default_reliable())
 //!         .build();
-//!     let topic = participant.create_topic::<HelloWorld>(
-//!         "HelloWorldTopic".to_string(),
+//!     let topic = participant.create_topic::<HelloWorld>( // <HelloWorld>: Data Type
+//!         "HelloWorldTopic".to_string(), // Topic name
 //!         TopicQos::Policies(Box::new(topic_qos)),
 //!     );
 //!
@@ -79,16 +85,20 @@
 //!     const DATA_WRITE: Token = Token(1);
 //!     const STOP: Token = Token(2);
 //!
+//!     // Create a Publisher to create the DataWriter.
 //!     let publisher = participant.create_publisher(PublisherQos::Default);
 //!     let dw_qos = DataWriterQosBuilder::new()
 //!         .reliability(policy::Reliability::default_reliable())
 //!         .build();
+//!     // Create a DataWriter to publish the HelloWorld topic.
 //!     let mut datawriter =
 //!         publisher.create_datawriter::<HelloWorld>(DataWriterQos::Policies(Box::new(dw_qos)), topic);
+//!     // Register the DataWriter with poll to receive notifications such as DataWriterStatusChanged.
 //!     poll.register(&datawriter, DATA_WRITE, Ready::readable(), PollOpt::edge())
 //!         .unwrap();
 //!     let mut send_count = 0;
 //!
+//!     // Create a timer for periodic message publication and register it with poll.
 //!     let mut write_timer = Timer::default();
 //!     poll.register(
 //!         &mut write_timer,
@@ -99,7 +109,9 @@
 //!     .unwrap();
 //!     write_timer.set_timeout(Duration::new(2, 0), ());
 //!
+//!     // Create a channel for graceful shutdown when SIGINT is received.
 //!     let (stop_sender, stop_receiver) = mio_channel::sync_channel::<()>(1);
+//!     // Make the SIGINT handler send a message through the channel.
 //!     ctrlc::set_handler(move || {
 //!         println!("SIGINT received");
 //!         stop_sender
@@ -140,7 +152,9 @@
 //!                     }
 //!                 }
 //!                 STOP => {
-//!                     break 'dds_loop;
+//!                     // Do not call std::process::exit(): the destructors for DataWriter and
+//!                     // Participant will not run. Leave the loop or return instead.
+//!                     break 'dds_loop; // or return;
 //!                 }
 //!                 _ => unreachable!(),
 //!             }
@@ -163,6 +177,7 @@
 //! // use speedy::Writable; // only required if one or more `#[key]` attributes are specified to DdsData
 //! use umber_dds::{DdsData, DdsDeserialize, KeyHash};
 //!
+//! // Define the data to subscribe to as a struct and implement the DdsData and DdsDeserialize traits.
 //! #[derive(Clone, DdsData, DdsDeserialize)]
 //! struct HelloWorld {
 //!     index: u32,
@@ -173,20 +188,21 @@
 //!     let now = SystemTime::now()
 //!         .duration_since(SystemTime::UNIX_EPOCH)
 //!         .unwrap();
+//!     // DomainParticipant needs SmallRng to generate a participant-specific ID (GUID prefix).
 //!     let mut small_rng = rand::rngs::SmallRng::seed_from_u64(now.as_nanos() as u64);
 //!
 //!     let domain_id = 0;
 //!     let participant = DomainParticipant::new(
 //!         domain_id,
-//!         vec![Ipv4Addr::new(127, 0, 0, 1)],
-//!         None,
+//!         vec![Ipv4Addr::new(127, 0, 0, 1)], // NIC to use
+//!         None, // Use the default configuration when no ParticipantConfig is specified.
 //!         &mut small_rng,
 //!     );
 //!     let topic_qos = TopicQosBuilder::new()
 //!         .reliability(policy::Reliability::default_reliable())
 //!         .build();
-//!     let topic = participant.create_topic::<HelloWorld>(
-//!         "HelloWorldTopic".to_string(),
+//!     let topic = participant.create_topic::<HelloWorld>( // <HelloWorld>: Data Type
+//!         "HelloWorldTopic".to_string(), // Topic name
 //!         TopicQos::Policies(Box::new(topic_qos)),
 //!     );
 //!
@@ -194,12 +210,16 @@
 //!
 //!     const DATAREADER: Token = Token(0);
 //!     const STOP: Token = Token(1);
+//!     // Create a Subscriber to create the DataReader.
 //!     let subscriber = participant.create_subscriber(SubscriberQos::Default);
 //!     let dr_qos = DataReaderQosBuilder::new()
 //!         .reliability(policy::Reliability::default_reliable())
 //!         .build();
+//!     // Create a DataReader to receive the HelloWorld topic.
 //!     let mut datareader = subscriber
 //!         .create_datareader::<HelloWorld>(DataReaderQos::Policies(Box::new(dr_qos)), topic);
+//!     // Register the DataReader with poll to receive notifications such as
+//!     // matching a DataWriter and receiving data from it.
 //!     poll.register(
 //!         &mut datareader,
 //!         DATAREADER,
@@ -208,7 +228,9 @@
 //!     )
 //!     .unwrap();
 //!
+//!     // Create a channel for graceful shutdown when SIGINT is received.
 //!     let (stop_sender, stop_receiver) = mio_channel::sync_channel::<()>(1);
+//!     // Make the SIGINT handler send a message through the channel.
 //!     ctrlc::set_handler(move || {
 //!         println!("SIGINT received");
 //!         stop_sender
@@ -257,7 +279,9 @@
 //!                     }
 //!                 }
 //!                 STOP => {
-//!                     break 'dds_loop;
+//!                     // Do not call std::process::exit(): the destructors for DataReader and
+//!                     // Participant will not run. Leave the loop or return instead.
+//!                     break 'dds_loop; // or return;
 //!                 }
 //!                 _ => unreachable!(),
 //!             }
