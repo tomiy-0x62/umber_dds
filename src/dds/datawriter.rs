@@ -143,6 +143,16 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         inline_qos.key_hash = Some(kh);
         let mut si = BitFlags::<StatusInfoFlag>::empty();
         si |= StatusInfoFlag::Unregistered;
+        // RTPS v2.3 spec, 8.7.2.2.7 WRITER_DATA_LIFECYCLE
+        // If autodispose_unregistered_instances is enabled, Data Messages that unregister an instance must also
+        // dispose it. This restricts the allowable values of the DisposedFlag and UnregisteredFlag flags.
+        if self
+            .qos
+            .writer_data_lifecycle()
+            .autodispose_unregistered_instance
+        {
+            si |= StatusInfoFlag::Disposed;
+        }
         inline_qos.status_info = Some(si);
         let param_list = inline_qos.as_parameter_list();
         self.writer_data_to_hc(ts, None, DataKind::Empty, ih, true, Some(param_list));
