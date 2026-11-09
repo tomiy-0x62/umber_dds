@@ -14,7 +14,10 @@ use crate::message::submessage::element::{
     StatusInfoFlag, Timestamp,
 };
 use crate::rtps::{
-    cache::{AddChangeErr, CacheChange, ChangeKind, DataKind, HistoryCache, InstanceHandle},
+    cache::{
+        AddChangeErr, CacheChange, ChangeKind, DataMsgKind, HistoryCache, InstanceHandle,
+        PayloadKind,
+    },
     writer::*,
 };
 use crate::structure::{EntityKind, GUID};
@@ -123,7 +126,15 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         }
         let serialized_payload =
             SerializedPayload::new_from_cdr_data(data, RepresentationIdentifier::CDR_LE);
-        self.writer_data_to_hc(ts, Some(serialized_payload), DataKind::Data, ih, true, None);
+        self.writer_data_to_hc(
+            ts,
+            Some(serialized_payload),
+            PayloadKind::Data,
+            ih,
+            true,
+            None,
+            DataMsgKind::Data,
+        );
     }
 
     /// + data: specifies the instance to unregister. Provide the data associated with the target instance.
@@ -155,7 +166,15 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         }
         inline_qos.status_info = Some(si);
         let param_list = inline_qos.as_parameter_list();
-        self.writer_data_to_hc(ts, None, DataKind::Empty, ih, true, Some(param_list));
+        self.writer_data_to_hc(
+            ts,
+            None,
+            PayloadKind::Empty,
+            ih,
+            true,
+            Some(param_list),
+            DataMsgKind::StateUpdate,
+        );
     }
 
     /// + data: specifies the instance to dispose. Provide the data associated with the target instance.
@@ -178,7 +197,15 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         si |= StatusInfoFlag::Disposed;
         inline_qos.status_info = Some(si);
         let param_list = inline_qos.as_parameter_list();
-        self.writer_data_to_hc(ts, None, DataKind::Empty, ih, true, Some(param_list));
+        self.writer_data_to_hc(
+            ts,
+            None,
+            PayloadKind::Empty,
+            ih,
+            true,
+            Some(param_list),
+            DataMsgKind::StateUpdate,
+        );
     }
 
     /// + inc_seq_num: whether the seq_num needs to be incremented.
@@ -191,10 +218,11 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         self.writer_data_to_hc(
             ts,
             Some(serialized_payload),
-            DataKind::Data,
+            PayloadKind::Data,
             ih,
             inc_seq_num,
             None,
+            DataMsgKind::Data,
         );
     }
 
@@ -207,7 +235,15 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
     ) {
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
         let ih = self.key_hash2instance_handle(key_hash);
-        self.writer_data_to_hc(ts, Some(data), DataKind::Data, ih, inc_seq_num, None);
+        self.writer_data_to_hc(
+            ts,
+            Some(data),
+            PayloadKind::Data,
+            ih,
+            inc_seq_num,
+            None,
+            DataMsgKind::Data,
+        );
     }
 
     pub(crate) fn write_data_ud(&mut self, guid: GUID) {
@@ -230,21 +266,24 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
         self.writer_data_to_hc(
             ts,
             Some(serialized_payload),
-            DataKind::Key,
+            PayloadKind::Key,
             InstanceHandle::HANDLE_NO_DATA,
             true,
             Some(param_list),
+            DataMsgKind::StateUpdate,
         );
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn writer_data_to_hc(
         &mut self,
         ts: Timestamp,
         serialized_payload: Option<SerializedPayload>,
-        data_kind: DataKind,
+        payload_kind: PayloadKind,
         instance_handle: InstanceHandle,
         inc_seq_num: bool,
         inline_qos: Option<ParameterList>,
+        data_msg_kind: DataMsgKind,
     ) {
         if inc_seq_num {
             self.last_change_sequence_number += SequenceNumber(1);
@@ -258,7 +297,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
             self.last_change_sequence_number,
             ts,
             serialized_payload,
-            data_kind,
+            payload_kind,
             inline_qos.and_then(|i| InlineQos::from_parameter_list(&i).ok()),
             instance_handle,
         );
@@ -268,6 +307,7 @@ impl<W: Writable<Endianness> + DdsData> DataWriter<W> {
                 self.is_reliable(),
                 self.qos.resource_limits(),
                 self.qos.history(),
+                data_msg_kind,
             );
             match write_res {
                 Ok(_) => {

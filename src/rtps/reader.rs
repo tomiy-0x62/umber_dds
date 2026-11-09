@@ -12,13 +12,13 @@ use crate::message::message_builder::MessageBuilder;
 use crate::message::submessage::{
     element::{
         Gap, Heartbeat, Locator, RepresentationIdentifier, SequenceNumber, SequenceNumberSet,
-        StatusInfoFlag, Timestamp,
+        Timestamp,
     },
     submessage_flag::HeartbeatFlag,
 };
 use crate::network::udp_sender::UdpSender;
 use crate::rtps::cache::{
-    CacheChangeIng, DataKind, HCKey, HistoryCache, HistoryCacheType, InstanceHandle,
+    CacheChangeIng, DataMsgKind, HCKey, HistoryCache, HistoryCacheType, InstanceHandle, PayloadKind,
 };
 use crate::structure::{
     Duration, EntityId, GuidPrefix, RTPSEntity, ReaderProxy, TopicKind, WriterProxy, GUID,
@@ -84,6 +84,7 @@ pub trait RtpsReader: Any + Send {
         &mut self,
         source_guid_prefix: GuidPrefix,
         change: CacheChangeIng,
+        data_msg_kind: DataMsgKind,
     ) -> Option<Vec<ReaderTimer>>;
     fn check_liveliness(&mut self, disc_db: &mut DiscoveryDB);
     fn handle_heartbeat(
@@ -320,11 +321,8 @@ where
         &mut self,
         source_guid_prefix: GuidPrefix,
         change_ing: CacheChangeIng,
+        data_msg_kind: DataMsgKind,
     ) -> Option<Vec<ReaderTimer>> {
-        if change_ing.data_kind == DataKind::Key {
-            error!("Reader added change whose data_kind is Key");
-            return None;
-        }
         let writer_guid = GUID::new(source_guid_prefix, change_ing.writer_guid.entity_id);
         if let Some(wp) = self.unmatched_writers.remove(&writer_guid) {
             debug!(
@@ -360,7 +358,7 @@ where
         let key_hash = match change_ing.key_hash {
             Some(kh) => kh,
             None => {
-                if change_ing.data_kind == DataKind::Data {
+                if change_ing.payload_kind == PayloadKind::Data {
                     match change_ing.data_value() {
                         Some(data) => {
                             let received_bytes = data.to_bytes();
@@ -432,26 +430,6 @@ where
             ));
         }
         let change = change_ing.gen_cache_change(ih);
-        if let Some(iq) = change.inline_qos {
-            if let Some(si) = iq.status_info {
-                if si.contains(StatusInfoFlag::Disposed) {
-                    self.reader_cache.write().update_remote_instance_state(
-                        ih,
-                        InstanceStateKind::NotAliveDisposed,
-                        writer_guid,
-                    );
-                } else if si.contains(StatusInfoFlag::Unregistered) {
-                    self.reader_cache.write().update_remote_instance_state(
-                        ih,
-                        InstanceStateKind::NotAliveNoWriters,
-                        writer_guid,
-                    );
-                };
-            }
-        }
-        if change.data_kind != DataKind::Data {
-            return if rt.is_empty() { None } else { Some(rt) };
-        }
         if self.is_reliable() {
             // Reliable Reader Behavior
             if let Err(e) = self.reader_cache.write().add_change(
@@ -459,6 +437,7 @@ where
                 self.is_reliable(),
                 self.qos.resource_limits(),
                 self.qos.history(),
+                data_msg_kind,
             ) {
                 debug!(
                     "failed to add change to Reader: {}\n\tReader: {}\n\tWriter: {}",
@@ -535,6 +514,7 @@ where
                         self.is_reliable(),
                         self.qos.resource_limits(),
                         self.qos.history(),
+                        data_msg_kind,
                     ) {
                         warn!(
                             "failed to add change to Reader: {}\n\tReader: {}\n\tWriter: {}",

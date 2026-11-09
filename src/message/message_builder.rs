@@ -11,7 +11,7 @@ use super::{
     Header, Message,
 };
 use crate::dds::key::KeyHash;
-use crate::rtps::cache::{CacheChange, DataKind};
+use crate::rtps::cache::{CacheChange, PayloadKind};
 use crate::structure::{EntityId, GuidPrefix, ParameterId};
 use speedy::Endianness;
 
@@ -150,16 +150,16 @@ impl MessageBuilder {
         let payload_length;
         let serialized_payload = cache_change.data_value();
         if let Some(payload) = serialized_payload {
-            match cache_change.data_kind {
-                DataKind::Data => {
+            match cache_change.payload_kind {
+                PayloadKind::Data => {
                     payload_length = 4 + payload.value.len();
                     data_flag |= DataFlag::Data;
                 }
-                DataKind::Key => {
+                PayloadKind::Key => {
                     payload_length = 4 + payload.value.len();
                     data_flag |= DataFlag::Key;
                 }
-                DataKind::Empty => payload_length = 0,
+                PayloadKind::Empty => payload_length = 0,
             }
         } else {
             payload_length = 0;
@@ -167,12 +167,14 @@ impl MessageBuilder {
         let mut have_inline_qos = false;
         let mut inline_qos_params = ParameterList::new();
         let mut inline_qos_len = 0;
+        let mut add_key_cache = false;
         if let Some(kh) = key_hash {
             data_flag |= DataFlag::InlineQos;
             have_inline_qos = true;
             let kh_param = Parameter::new(ParameterId::PID_KEY_HASH, kh.to_vec_u8());
             inline_qos_params.add_parameter(kh_param);
             inline_qos_len += 20;
+            add_key_cache = true;
         }
         if let Some(iq) = cache_change.inline_qos.as_ref() {
             data_flag |= DataFlag::InlineQos;
@@ -184,8 +186,10 @@ impl MessageBuilder {
                         inline_qos_len += 8;
                     }
                     ParameterId::PID_KEY_HASH => {
-                        inline_qos_params.add_parameter(param.clone());
-                        inline_qos_len += 20;
+                        if !add_key_cache {
+                            inline_qos_params.add_parameter(param.clone());
+                            inline_qos_len += 20;
+                        }
                     }
                     pid => panic!(
                         "MessageBuilder receive unkown inlineQos whose pid is 0x{:02x}",

@@ -16,9 +16,9 @@ use crate::message::{
     *,
 };
 use crate::net_util::*;
-use crate::rtps::cache::{DataKind, HistoryCache, HistoryCacheType};
+use crate::rtps::cache::{HistoryCache, HistoryCacheType, PayloadKind};
 use crate::rtps::{
-    cache::{CacheChangeIng, ChangeKind},
+    cache::{CacheChangeIng, ChangeKind, DataMsgKind},
     reader::{ReaderTimer, RtpsReader},
     writer::{Writer, WriterTimer},
 };
@@ -524,12 +524,77 @@ impl MessageReceiver {
         let key_hash = inline_qos.unwrap_or(InlineQos::empty()).key_hash;
 
         let ts = Timestamp::now().expect("failed to get Timestamp::now()");
-        let data_kind = if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
-            DataKind::Data
+        let payload_kind = if flag.contains(DataFlag::Data) && !flag.contains(DataFlag::Key) {
+            PayloadKind::Data
         } else if !flag.contains(DataFlag::Data) && flag.contains(DataFlag::Key) {
-            DataKind::Key
+            PayloadKind::Key
         } else {
-            DataKind::Empty
+            PayloadKind::Empty
+        };
+        let data_msg_kind = match payload_kind {
+            PayloadKind::Data => {
+                if flag.contains(DataFlag::InlineQos) {
+                    if inline_qos
+                        .expect(
+                            "broken Data Message: InlineQos Flag is set, but not found inlineQos",
+                        )
+                        .status_info
+                        .is_some()
+                    {
+                        DataMsgKind::DataStateUpdate
+                    } else {
+                        DataMsgKind::Data
+                    }
+                } else {
+                    DataMsgKind::Data
+                }
+            }
+            PayloadKind::Key => {
+                if flag.contains(DataFlag::InlineQos) {
+                    if inline_qos
+                        .expect(
+                            "broken Data Message: InlineQos Flag is set, but not found inlineQos",
+                        )
+                        .status_info
+                        .is_some()
+                    {
+                        DataMsgKind::StateUpdate
+                    } else {
+                        return Err(MessageError::Warn(
+                            "unsupported DATA submessage: Key, InlineQos(not contains STATUS_INFO) flag is set and Data flag is not set."
+                                .to_string(),
+                        ));
+                    }
+                } else {
+                    return Err(MessageError::Warn(
+                        "unsupported DATA submessage: Key flag is set and Data, InlineQos flag is not set."
+                            .to_string(),
+                    ));
+                }
+            }
+            PayloadKind::Empty => {
+                if flag.contains(DataFlag::InlineQos) {
+                    if inline_qos
+                        .expect(
+                            "broken Data Message: InlineQos Flag is set, but not found inlineQos",
+                        )
+                        .status_info
+                        .is_some()
+                    {
+                        DataMsgKind::StateUpdate
+                    } else {
+                        return Err(MessageError::Warn(
+                            "unsupported DATA submessage: InlineQos(not contains STATUS_INFO) flag is set and Data, Key flag is not set."
+                                .to_string(),
+                        ));
+                    }
+                } else {
+                    return Err(MessageError::Error(
+                        "invalied DATA submessage: Data, Key, InlineQos flag is not set."
+                            .to_string(),
+                    ));
+                }
+            }
         };
         let change = CacheChangeIng::new(
             ChangeKind::Alive,
@@ -537,7 +602,7 @@ impl MessageReceiver {
             data.writer_sn,
             ts,
             data.serialized_payload.clone(),
-            data_kind,
+            payload_kind,
             inline_qos,
             key_hash,
         );
@@ -566,6 +631,7 @@ impl MessageReceiver {
                 ts,
                 inline_qos.unwrap_or(InlineQos::empty()),
                 data_key,
+                data_msg_kind,
                 readers,
             )?;
         } else if data.writer_id == EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_ANNOUNCER
@@ -578,6 +644,7 @@ impl MessageReceiver {
                 change,
                 inline_qos.unwrap_or(InlineQos::empty()),
                 data_key,
+                data_msg_kind,
                 writers,
                 readers,
             )?;
@@ -585,11 +652,12 @@ impl MessageReceiver {
             || data.reader_id == EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER
         {
             // if ParticipantMessage
-            self.handle_participant_message(data, change, ts, readers)?;
+            self.handle_participant_message(data, change, ts, data_msg_kind, readers)?;
         } else if data.reader_id == EntityId::UNKNOW {
             for reader in readers.values_mut() {
                 if reader.is_contain_writer(writer_guid) {
-                    if let Some(mut rt) = reader.add_change(self.source_guid_prefix, change.clone())
+                    if let Some(mut rt) =
+                        reader.add_change(self.source_guid_prefix, change.clone(), data_msg_kind)
                     {
                         rtv.append(&mut rt);
                     };
@@ -604,7 +672,9 @@ impl MessageReceiver {
             match readers.get_mut(&data.reader_id) {
                 Some(r) => {
                     if r.is_contain_writer(writer_guid) {
-                        if let Some(mut rt) = r.add_change(self.source_guid_prefix, change) {
+                        if let Some(mut rt) =
+                            r.add_change(self.source_guid_prefix, change, data_msg_kind)
+                        {
                             rtv.append(&mut rt);
                         };
                         self.disc_db.write_remote_writer(
@@ -986,6 +1056,7 @@ impl MessageReceiver {
         ts: Timestamp,
         inline_qos: InlineQos,
         data_key: DataKey,
+        data_msg_kind: DataMsgKind,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         if let Some(status_info) = inline_qos.status_info {
@@ -1126,7 +1197,7 @@ impl MessageReceiver {
         }
         match readers.get_mut(&EntityId::SEDP_BUILTIN_PUBLICATIONS_DETECTOR) {
             Some(r) => {
-                r.add_change(self.source_guid_prefix, change);
+                r.add_change(self.source_guid_prefix, change, data_msg_kind);
             }
             None => {
                 return Err(MessageError::Error(
@@ -1144,6 +1215,7 @@ impl MessageReceiver {
         change: CacheChangeIng,
         inline_qos: InlineQos,
         data_key: DataKey,
+        data_msg_kind: DataMsgKind,
         writers: &mut BTreeMap<EntityId, Writer>,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
@@ -1272,7 +1344,7 @@ impl MessageReceiver {
         }
         match readers.get_mut(&EntityId::SEDP_BUILTIN_SUBSCRIPTIONS_DETECTOR) {
             Some(r) => {
-                r.add_change(self.source_guid_prefix, change);
+                r.add_change(self.source_guid_prefix, change, data_msg_kind);
             }
             None => {
                 return Err(MessageError::Error(
@@ -1287,6 +1359,7 @@ impl MessageReceiver {
         data: Data,
         change: CacheChangeIng,
         ts: Timestamp,
+        data_msg_kind: DataMsgKind,
         readers: &mut BTreeMap<EntityId, Box<dyn RtpsReader>>,
     ) -> Result<(), MessageError> {
         let deserialized = if let Some(sp) = data.serialized_payload.as_ref() {
@@ -1364,7 +1437,7 @@ impl MessageReceiver {
             }
         }
         match readers.get_mut(&EntityId::P2P_BUILTIN_PARTICIPANT_MESSAGE_READER) {
-            Some(r) => r.add_change(self.source_guid_prefix, change),
+            Some(r) => r.add_change(self.source_guid_prefix, change, data_msg_kind),
             None => {
                 return Err(MessageError::Error(
                     "not find p2p_builtin_participant_reader".to_string(),

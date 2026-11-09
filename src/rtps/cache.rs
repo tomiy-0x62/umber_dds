@@ -4,7 +4,7 @@ use crate::dds::qos::policy::{
 };
 use crate::dds::sample::{InstanceStateKind, SampleInfo};
 use crate::message::submessage::element::{
-    InlineQos, SequenceNumber, SerializedPayload, Timestamp,
+    InlineQos, SequenceNumber, SerializedPayload, StatusInfoFlag, Timestamp,
 };
 use crate::structure::GUID;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -18,11 +18,28 @@ pub(crate) enum AddChangeErr {
     WouldBlock(String),
 }
 
-#[derive(PartialEq, Eq, Clone)]
-pub enum DataKind {
+/// The type of the serialized payload in a DATA submessage.
+///
+/// This can be determined by the flags in the DATA submessage:
+/// `Data` if the DATA flag is set and the KEY flag is not set,
+/// `Key` if the DATA flag is not set and the KEY flag is set,
+/// and `Empty` otherwise.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum PayloadKind {
     Data,
     Key,
     Empty,
+}
+
+/// The purpose of the DATA submessage.
+#[derive(PartialEq, Eq, Clone, Copy)]
+pub enum DataMsgKind {
+    /// Contains Data in the SerializedPayload.
+    Data,
+    /// Contains STATUS_INFO in the InlineQoS.
+    StateUpdate,
+    /// Contains Data in the SerializedPayload and STATUS_INFO in the InlineQoS.
+    DataStateUpdate,
 }
 
 #[derive(PartialEq, Eq, Clone)]
@@ -32,7 +49,7 @@ pub struct CacheChange {
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
-    pub data_kind: DataKind,
+    pub payload_kind: PayloadKind,
     pub inline_qos: Option<InlineQos>,
     // In DDS, the value of the fields
     // labeled as ‘key’ within the data
@@ -50,7 +67,7 @@ impl CacheChange {
         sequence_number: SequenceNumber,
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
-        data_kind: DataKind,
+        payload_kind: PayloadKind,
         inline_qos: Option<InlineQos>,
         instance_handle: InstanceHandle,
     ) -> Self {
@@ -60,7 +77,7 @@ impl CacheChange {
             sequence_number,
             timestamp,
             data_value,
-            data_kind,
+            payload_kind,
             inline_qos,
             instance_handle,
             is_read: false,
@@ -79,7 +96,7 @@ pub struct CacheChangeIng {
     pub sequence_number: SequenceNumber,
     pub timestamp: Timestamp,
     data_value: Option<SerializedPayload>,
-    pub data_kind: DataKind,
+    pub payload_kind: PayloadKind,
     inline_qos: Option<InlineQos>,
     pub key_hash: Option<KeyHash>,
 }
@@ -92,7 +109,7 @@ impl CacheChangeIng {
         sequence_number: SequenceNumber,
         timestamp: Timestamp,
         data_value: Option<SerializedPayload>,
-        data_kind: DataKind,
+        payload_kind: PayloadKind,
         inline_qos: Option<InlineQos>,
         key_hash: Option<KeyHash>,
     ) -> Self {
@@ -102,7 +119,7 @@ impl CacheChangeIng {
             sequence_number,
             timestamp,
             data_value,
-            data_kind,
+            payload_kind,
             inline_qos,
             key_hash,
         }
@@ -117,7 +134,7 @@ impl CacheChangeIng {
             self.sequence_number,
             self.timestamp,
             self.data_value,
-            self.data_kind,
+            self.payload_kind,
             self.inline_qos,
             instance_handle,
         )
@@ -270,7 +287,6 @@ impl core::fmt::Display for HistoryCacheType {
 }
 
 struct WtierInstanceInfo {
-    writer_guid: GUID,
     owner_ship: Ownership,
     owner_ship_strength: OwnershipStrength,
     instance_state: InstanceStateKind,
@@ -303,7 +319,7 @@ pub(crate) struct HistoryCache {
     keyhash_instancehandle: BiMap<KeyHash, InstanceHandle>,
     instance_state: BTreeMap<InstanceHandle, InstanceState>,
     // only use type Reader
-    remote_writer_instance_state: BTreeMap<InstanceHandle, Vec<WtierInstanceInfo>>,
+    remote_writer_instance_state: BTreeMap<InstanceHandle, BTreeMap<GUID, WtierInstanceInfo>>,
 }
 
 #[derive(Clone, Copy)]
@@ -373,11 +389,7 @@ impl HistoryCache {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
         if let Some(instance_handle) = self.keyhash_instancehandle.get_by_left(&keyhash) {
             if let Some(v) = self.remote_writer_instance_state.get(instance_handle) {
-                for wi in v {
-                    if wi.writer_guid == writer_guid {
-                        return Some(*instance_handle);
-                    }
-                }
+                return v.get(&writer_guid).map(|_wi| *instance_handle);
             }
         }
         None
@@ -431,16 +443,24 @@ impl HistoryCache {
         self.instance_state
             .entry(ih)
             .or_insert_with(InstanceState::new);
+
         let wi = WtierInstanceInfo {
-            writer_guid,
             owner_ship,
             owner_ship_strength,
             instance_state,
         };
-        self.remote_writer_instance_state
-            .entry(ih)
-            .or_default()
-            .push(wi);
+        match self.remote_writer_instance_state.get_mut(&ih) {
+            Some(v) => {
+                if v.get(&writer_guid).is_none() {
+                    v.insert(writer_guid, wi);
+                }
+            }
+            None => {
+                let mut map = BTreeMap::new();
+                map.insert(writer_guid, wi);
+                self.remote_writer_instance_state.insert(ih, map);
+            }
+        }
         info!(
             "HistoryCache register (Writer, InstanceHandle)\n\tWriter: {}\n\t{}",
             writer_guid, ih
@@ -454,13 +474,13 @@ impl HistoryCache {
     ) -> bool {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
         if let Some(v) = self.remote_writer_instance_state.get(&instance_handle) {
-            for wi in v {
-                if wi.writer_guid == writer_guid {
-                    return wi.instance_state == InstanceStateKind::Alive;
-                }
+            match v.get(&writer_guid) {
+                Some(wi) => wi.instance_state == InstanceStateKind::Alive,
+                None => false,
             }
+        } else {
+            false
         }
-        false
     }
     pub fn is_alive_local_instance(&self, instance_handle: InstanceHandle) -> bool {
         assert_eq!(self.hc_type, HistoryCacheType::Writer);
@@ -475,8 +495,8 @@ impl HistoryCache {
         if let Some(v) = self.remote_writer_instance_state.get(&instance_handle) {
             let mut most_strong = OwnershipStrength(i32::MIN);
             let mut target_strength = None;
-            for wi in v {
-                if wi.writer_guid == writer_guid {
+            for (&wguid, wi) in v {
+                if wguid == writer_guid {
                     if wi.owner_ship == Ownership::Shared {
                         return true;
                     }
@@ -503,7 +523,7 @@ impl HistoryCache {
     pub fn remove_writer(&mut self, writer_guid: GUID) {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
         for (&ih, v) in self.remote_writer_instance_state.iter_mut() {
-            v.retain(|info| info.writer_guid != writer_guid);
+            v.remove(&writer_guid);
             if v.is_empty() {
                 if let Some(is) = self.instance_state.get_mut(&ih) {
                     is.state = InstanceStateKind::NotAliveNoWriters
@@ -530,36 +550,63 @@ impl HistoryCache {
         is_reliable: bool,
         resource_limits: ResourceLimits,
         history: History,
+        data_msg_kind: DataMsgKind,
     ) -> Result<(), AddChangeErr> {
         let seq_num = change.sequence_number;
         let key = HCKey::new(change.writer_guid, seq_num);
         let ih = change.instance_handle;
         if self.hc_type == HistoryCacheType::Reader {
+            let is_owner_first = self.is_owner(change.writer_guid, ih);
             let mut owner_ship = None;
-            if let Some(wi) = self.remote_writer_instance_state.get_mut(&ih) {
-                for w in wi {
-                    if w.writer_guid == change.writer_guid {
-                        owner_ship = Some(w.owner_ship);
-                        w.instance_state = InstanceStateKind::Alive;
-                        if let Some(is) = self.instance_state.get_mut(&ih) {
-                            match is.state {
-                                InstanceStateKind::Alive => (),
-                                InstanceStateKind::NotAliveDisposed => {
-                                    is.state = InstanceStateKind::Alive;
-                                    is.disposed_generation_count += 1;
+            if let Some(wiv) = self.remote_writer_instance_state.get_mut(&ih) {
+                if let Some(wi) = wiv.get_mut(&change.writer_guid) {
+                    owner_ship = Some(wi.owner_ship);
+                    if data_msg_kind == DataMsgKind::Data {
+                        self.update_remote_instance_state(
+                            ih,
+                            InstanceStateKind::Alive,
+                            change.writer_guid,
+                            owner_ship.unwrap(),
+                            is_owner_first,
+                        );
+                    } else {
+                        if let Some(iq) = change.inline_qos {
+                            if let Some(si) = iq.status_info {
+                                if si.contains(StatusInfoFlag::Disposed) {
+                                    self.update_remote_instance_state(
+                                        ih,
+                                        InstanceStateKind::NotAliveDisposed,
+                                        change.writer_guid,
+                                        owner_ship.unwrap(),
+                                        is_owner_first,
+                                    );
+                                } else if si.contains(StatusInfoFlag::Unregistered) {
+                                    self.update_remote_instance_state(
+                                        ih,
+                                        InstanceStateKind::NotAliveNoWriters,
+                                        change.writer_guid,
+                                        owner_ship.unwrap(),
+                                        is_owner_first,
+                                    );
                                 }
-                                InstanceStateKind::NotAliveNoWriters => {
-                                    is.state = InstanceStateKind::Alive;
-                                    is.no_writers_generation_count += 1;
-                                }
+                            } else {
+                                warn!(
+                                        "received non data data_msg, but not contains inline_qos.status_info: {:?}", seq_num
+                                    );
                             }
+                        } else {
+                            warn!("received non data data_msg, but not contains inline_qos");
                         }
                     }
                 }
             }
             if let Some(os) = owner_ship {
-                if os == Ownership::Exclusive && !self.is_owner(change.writer_guid, ih) {
+                if os == Ownership::Exclusive && !is_owner_first {
                     // not owner, do nothing
+                    debug!(
+                        "added change {} from non owner writer {}",
+                        change.sequence_number.0, change.writer_guid
+                    );
                     return Ok(());
                 }
             } else {
@@ -782,81 +829,108 @@ impl HistoryCache {
         }
     }
 
-    pub(crate) fn update_remote_instance_state(
+    fn update_remote_instance_state(
         &mut self,
         instance_handle: InstanceHandle,
         instance_state: InstanceStateKind,
         writer_guid: GUID,
+        owner_ship: Ownership,
+        is_owner: bool,
     ) {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
         debug!(
             "update_remote_instance_state: {:?}, {:?}",
             instance_handle, instance_state
         );
-        // update view_state
-        if let Some(is) = self.instance_state.get_mut(&instance_handle) {
-            if is.state == InstanceStateKind::Alive && instance_state != InstanceStateKind::Alive {
-                is.viewed = false;
-            }
-        }
-        if instance_state == InstanceStateKind::NotAliveDisposed {
-            if let Some(is) = self.instance_state.get_mut(&instance_handle) {
-                is.state = instance_state;
-            }
-        }
-        if instance_state == InstanceStateKind::Alive {
-            if let Some(is) = self.instance_state.get_mut(&instance_handle) {
-                match is.state {
-                    InstanceStateKind::Alive => (),
-                    InstanceStateKind::NotAliveDisposed => {
-                        is.state = InstanceStateKind::Alive;
-                        is.disposed_generation_count += 1;
-                    }
-                    InstanceStateKind::NotAliveNoWriters => {
-                        is.state = InstanceStateKind::Alive;
-                        is.no_writers_generation_count += 1;
-                    }
-                }
-            }
-        }
+
+        // update writer insatnce state
         if let Some(v) = self.remote_writer_instance_state.get_mut(&instance_handle) {
-            let mut instance_alive = false;
-            for wi in v.iter_mut() {
-                if wi.writer_guid == writer_guid {
-                    wi.instance_state = instance_state
-                } else {
-                    if wi.instance_state == InstanceStateKind::Alive {
-                        instance_alive = true;
-                    }
-                }
+            if let Some(wi) = v.get_mut(&writer_guid) {
+                wi.instance_state = instance_state;
+            } else {
+                unreachable!("attempt to udpate state of unkown writer");
             }
-            if instance_state == InstanceStateKind::NotAliveNoWriters {
-                if instance_alive {
-                    if let Some(is) = self.instance_state.get_mut(&instance_handle) {
-                        match is.state {
-                            InstanceStateKind::Alive => (),
-                            InstanceStateKind::NotAliveDisposed => {
-                                is.state = InstanceStateKind::Alive;
-                                is.disposed_generation_count += 1;
-                            }
-                            InstanceStateKind::NotAliveNoWriters => {
-                                is.state = InstanceStateKind::Alive;
-                                is.no_writers_generation_count += 1;
+        } else {
+            unreachable!("attempt to udpate state of unkown instance");
+        }
+
+        // update instance state
+        if !(owner_ship == Ownership::Exclusive && !is_owner) {
+            if let Some(is) = self.instance_state.get_mut(&instance_handle) {
+                if is.state == instance_state {
+                    return;
+                };
+
+                match is.state {
+                    InstanceStateKind::Alive => match instance_state {
+                        InstanceStateKind::Alive => unreachable!(),
+                        InstanceStateKind::NotAliveDisposed => {
+                            debug!(
+                                "update_remote_instance_state: {:?}, {:?}, Alive to Disposed",
+                                instance_handle, instance_state
+                            );
+                            is.state = InstanceStateKind::NotAliveDisposed;
+                        }
+                        InstanceStateKind::NotAliveNoWriters => {
+                            if let Some(wiv) =
+                                self.remote_writer_instance_state.get(&instance_handle)
+                            {
+                                let mut instance_alive = false;
+                                for wi in wiv.values() {
+                                    if wi.instance_state == InstanceStateKind::Alive {
+                                        instance_alive = true;
+                                    }
+                                }
+                                if !instance_alive {
+                                    debug!(
+                                        "update_remote_instance_state: {:?}, {:?}, Alive to NoWriters",
+                                        instance_handle, instance_state
+                                    );
+                                    is.state = InstanceStateKind::NotAliveNoWriters;
+                                }
+                            } else {
+                                unreachable!();
                             }
                         }
-                    } else {
-                        unreachable!();
-                    }
-                } else {
-                    if let Some(is) = self.instance_state.get_mut(&instance_handle) {
-                        is.state = InstanceStateKind::NotAliveNoWriters;
-                    } else {
-                        unreachable!();
-                    }
+                    },
+                    InstanceStateKind::NotAliveDisposed => match instance_state {
+                        InstanceStateKind::Alive => {
+                            debug!(
+                                "update_remote_instance_state: {:?}, {:?}, Disposed to Alive",
+                                instance_handle, instance_state
+                            );
+                            is.state = InstanceStateKind::Alive;
+                            is.disposed_generation_count += 1;
+                            is.viewed = false;
+                        }
+                        InstanceStateKind::NotAliveDisposed => unreachable!(),
+                        InstanceStateKind::NotAliveNoWriters => {
+                            // do nothing
+                        }
+                    },
+                    InstanceStateKind::NotAliveNoWriters => match instance_state {
+                        InstanceStateKind::Alive => {
+                            debug!(
+                                "update_remote_instance_state: {:?}, {:?}, NoWriters to Alive",
+                                instance_handle, instance_state
+                            );
+                            is.state = InstanceStateKind::Alive;
+                            is.no_writers_generation_count += 1;
+                            is.viewed = false;
+                        }
+                        InstanceStateKind::NotAliveDisposed => {
+                            debug!(
+                                "update_remote_instance_state: {:?}, {:?}, NoWriters to Disposed",
+                                instance_handle, instance_state
+                            );
+                            is.state = InstanceStateKind::NotAliveDisposed;
+                        }
+                        InstanceStateKind::NotAliveNoWriters => unreachable!(),
+                    },
                 }
             }
         } else {
-            unreachable!();
+            // do nothing
         }
     }
 

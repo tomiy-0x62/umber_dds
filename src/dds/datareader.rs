@@ -90,7 +90,9 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
             .collect();
         let samples = self.deserialize_changes(changes, &sample_infos);
         for si in sample_infos {
-            hc.update_remote_instance_view_state(si.instance_handle, true);
+            if si.valid_data {
+                hc.update_remote_instance_view_state(si.instance_handle, true);
+            }
         }
         for key in keys.iter() {
             hc.remove_change(key, true);
@@ -112,7 +114,9 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
             .collect();
         let samples = self.deserialize_changes(changes, &sample_infos);
         for si in sample_infos {
-            hc.update_remote_instance_view_state(si.instance_handle, true);
+            if si.valid_data {
+                hc.update_remote_instance_view_state(si.instance_handle, true);
+            }
         }
         for key in keys {
             hc.mark_change_read(&key);
@@ -134,7 +138,11 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
             .map(|change| hc.change2sample_info(change))
             .collect();
         let samples = self.deserialize_changes(changes, &sample_infos);
-        hc.update_remote_instance_view_state(instance_handle, true);
+        for si in sample_infos {
+            if si.valid_data {
+                hc.update_remote_instance_view_state(si.instance_handle, true);
+            }
+        }
         for key in keys.iter() {
             hc.remove_change(key, true);
         }
@@ -155,7 +163,11 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData> DataReader<R> {
             .map(|change| hc.change2sample_info(change))
             .collect();
         let samples = self.deserialize_changes(changes, &sample_infos);
-        hc.update_remote_instance_view_state(instance_handle, true);
+        for si in sample_infos {
+            if si.valid_data {
+                hc.update_remote_instance_view_state(si.instance_handle, true);
+            }
+        }
         for key in keys {
             hc.mark_change_read(&key);
         }
