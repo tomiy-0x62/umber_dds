@@ -362,7 +362,8 @@ impl Writer {
             }
         }
         for seq_num in to_send_data.keys() {
-            if let Some(aa_change) = self.writer_cache.read().get_change(self.guid, *seq_num) {
+            let hc = self.writer_cache.read();
+            if let Some(aa_change) = hc.get_change(self.guid, *seq_num) {
                 let reader_locators = to_send_data.get(seq_num).unwrap();
                 let send_list = Self::min_message_cover(reader_locators);
                 for (reid, loc) in send_list {
@@ -371,7 +372,7 @@ impl Writer {
                     let time_stamp = Timestamp::now();
                     message_builder.info_ts(Endianness::LittleEndian, time_stamp);
                     let key_hash = if self.is_keyed {
-                        self.writer_cache.read().ih2kh(aa_change.instance_handle)
+                        hc.ih2kh(aa_change.instance_handle)
                     } else {
                         None
                     };
@@ -392,6 +393,7 @@ impl Writer {
             } else {
                 unreachable!("Writer::handle_write_data_cmd, attempt to get non-existent change with HCKey {{ guid: {}, seq_num: {} }} from writer_cache", self.guid, seq_num.0)
             }
+            drop(hc);
             if !self.is_reliable() {
                 self.writer_cache
                     .write()
