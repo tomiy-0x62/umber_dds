@@ -1,5 +1,5 @@
 use crate::message::submessage::element::Timestamp;
-use crate::rtps::cache::InstanceHandle;
+pub use crate::rtps::cache::InstanceHandle;
 use crate::DdsData;
 use speedy::{Endianness, Readable};
 

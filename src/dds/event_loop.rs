@@ -448,7 +448,7 @@ impl EventLoop {
                                 if let Some(reader) = self.readers.get(&reid) {
                                     // Checks the state of the instance represented by `ih`. If it is not alive, it stops the timer without triggering a `deadline_missed` notification.
                                     if reader.is_matched_writer_instance_alive(wguid, ih) {
-                                        reader.notify_reqested_deadline_missed(wguid);
+                                        reader.notify_reqested_deadline_missed(wguid, ih);
                                         trace!(
                                             "set Reader Deadline timer({:?})\n\tReader: {}",
                                             duration,

@@ -261,62 +261,65 @@ impl Writer {
         let hkind = history.kind;
         let hdepth = history.depth;
         let durability = self.qos.durability();
-        let seq_nums = self.writer_cache.write().get_unprocessed();
-        debug!(
-            "handle_write_data_cmd: unprocessed {:?}\n\tWriter: {}",
-            seq_nums, self.guid
-        );
+        let unprocessed = self.writer_cache.write().get_unprocessed();
 
-        let oldest_unprocessed = match seq_nums.first() {
-            Some(v) => *v,
-            None => {
-                // called Writer::handle_write_data_cmd but writer_cache.unprocessed is empty.
-                // This decrease occurs when multiple data samples are written to the same DataWriter
-                // within a short period of time.
-                return if wt.is_empty() { None } else { Some(wt) };
-            }
-        };
+        for (ih, seq_nums) in unprocessed.iter() {
+            debug!(
+                "handle_write_data_cmd: unprocessed {:?}\n\tWriter: {}\n\t{}",
+                seq_nums, self.guid, ih
+            );
 
-        let deadline_period = self.qos.deadline().period;
+            let oldest_unprocessed = match seq_nums.first() {
+                Some(v) => *v,
+                None => {
+                    // called Writer::handle_write_data_cmd but writer_cache.unprocessed is empty.
+                    // This decrease occurs when multiple data samples are written to the same DataWriter
+                    // within a short period of time.
+                    return if wt.is_empty() { None } else { Some(wt) };
+                }
+            };
 
-        for (i, seq_num) in seq_nums.iter().rev().enumerate() {
-            for reader_proxy in self.matched_readers.values_mut() {
-                reader_proxy.update_cache_state(
-                    *seq_num,
-                    /* TODO: if DDS_FILTER(reader_proxy, change) { false } else { true }, */
-                    match hkind {
-                        HistoryQosKind::KeepAll => true,
-                        HistoryQosKind::KeepLast => match durability {
-                            // to keep only the latest hdepth changes
-                            Durability::Volatile => i < hdepth as usize,
-                            // to retaine one additional Change
-                            Durability::TransientLocal => i <= hdepth as usize,
+            let deadline_period = self.qos.deadline().period;
+
+            for (i, seq_num) in seq_nums.iter().rev().enumerate() {
+                for reader_proxy in self.matched_readers.values_mut() {
+                    reader_proxy.update_cache_state(
+                        *seq_num,
+                        /* TODO: if DDS_FILTER(reader_proxy, change) { false } else { true }, */
+                        match hkind {
+                            HistoryQosKind::KeepAll => true,
+                            HistoryQosKind::KeepLast => match durability {
+                                // to keep only the latest hdepth changes
+                                Durability::Volatile => i < hdepth as usize,
+                                // to retaine one additional Change
+                                Durability::TransientLocal => i <= hdepth as usize,
+                            },
                         },
-                    },
-                    if self.push_mode {
-                        ChangeForReaderStatusKind::Unsent
-                    } else {
-                        ChangeForReaderStatusKind::Unacknowledged
-                    },
-                )
-            }
-            if let Some(aa_change) = self.writer_cache.read().get_change(self.guid, *seq_num) {
-                if deadline_period != Duration::INFINITE {
-                    let ih = if self.is_keyed {
-                        aa_change.instance_handle
-                    } else {
-                        InstanceHandle::HANDLE_NO_KEY
-                    };
-                    wt.push(WriterTimer::Deadline(
-                        self.guid.entity_id,
-                        ih,
-                        deadline_period.into(),
-                    ));
+                        if self.push_mode {
+                            ChangeForReaderStatusKind::Unsent
+                        } else {
+                            ChangeForReaderStatusKind::Unacknowledged
+                        },
+                    )
+                }
+                if let Some(aa_change) = self.writer_cache.read().get_change(self.guid, *seq_num) {
+                    if deadline_period != Duration::INFINITE {
+                        let ih = if self.is_keyed {
+                            aa_change.instance_handle
+                        } else {
+                            InstanceHandle::HANDLE_NO_KEY
+                        };
+                        wt.push(WriterTimer::Deadline(
+                            self.guid.entity_id,
+                            ih,
+                            deadline_period.into(),
+                        ));
+                    }
                 }
             }
-        }
-        if self.is_reliable() {
-            self.remove_acked_changes(oldest_unprocessed);
+            if self.is_reliable() {
+                self.remove_acked_changes(oldest_unprocessed);
+            }
         }
 
         let self_guid = self.guid();

@@ -209,7 +209,7 @@ pub enum ChangeKind {
     _NotAliveUnregistered,
 }
 
-#[derive(PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Debug)]
+#[derive(PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Debug, Hash)]
 pub struct InstanceHandle {
     instance_id: u32,
 }
@@ -305,7 +305,7 @@ pub(crate) struct HistoryCache {
     /// the `DataWriter` and the RTPS Writer are decoupled.
     /// The `unprocessed_seqnum` is buffer used to pass
     /// the `SequenceNumber` values of newly added changes from the `DataWriter` to the RTPS Writer.
-    unprocessed_seqnum: BTreeSet<SequenceNumber>,
+    unprocessed_seqnum: BTreeMap<InstanceHandle, BTreeSet<SequenceNumber>>,
     /// only use type Reader
     /// Used to notify the Reader that Change has already been taken by the DataReader.
     /// The Reader uses this information to remove unnecessary cache_state entries held by the WriterProxy.
@@ -360,7 +360,7 @@ impl HistoryCache {
             kind2key: BTreeMap::new(),
             last_added: BTreeMap::new(),
             hc_type,
-            unprocessed_seqnum: BTreeSet::new(),
+            unprocessed_seqnum: BTreeMap::new(),
             taken_key: BTreeSet::new(),
             ready_key: BTreeSet::new(),
             min_seq_num: None,
@@ -628,7 +628,10 @@ impl HistoryCache {
                     HistoryCacheType::Writer => {
                         // use builtin-Endpoint
                         self.last_added.insert(key.guid, change.timestamp);
-                        self.unprocessed_seqnum.insert(seq_num);
+                        self.unprocessed_seqnum
+                            .entry(ih)
+                            .or_default()
+                            .insert(seq_num);
                         Ok(())
                     }
                     HistoryCacheType::Dummy => unreachable!(),
@@ -736,13 +739,16 @@ impl HistoryCache {
                     "add change with {} to unprocessed_seqnum in {} HistoryCache",
                     key, self.hc_type
                 );
-                self.unprocessed_seqnum.insert(seq_num);
+                self.unprocessed_seqnum
+                    .entry(ih)
+                    .or_default()
+                    .insert(seq_num);
             }
             Ok(())
         }
     }
 
-    pub fn get_unprocessed(&mut self) -> BTreeSet<SequenceNumber> {
+    pub fn get_unprocessed(&mut self) -> BTreeMap<InstanceHandle, BTreeSet<SequenceNumber>> {
         if let HistoryCacheType::Writer = self.hc_type {
             core::mem::take(&mut self.unprocessed_seqnum)
         } else {
@@ -1020,6 +1026,14 @@ impl HistoryCache {
         }
     }
     */
+    fn unprocessed_contains(&self, key: &HCKey) -> bool {
+        let ih = self.changes.get(key).unwrap().instance_handle;
+        if let Some(v) = self.unprocessed_seqnum.get(&ih) {
+            v.contains(&key.seq_num)
+        } else {
+            false
+        }
+    }
     pub fn remove_change_from_writer(&mut self, guid: &GUID) {
         if let HistoryCacheType::Reader = self.hc_type {
             let todo_remove: Vec<HCKey> = self
@@ -1032,7 +1046,10 @@ impl HistoryCache {
                 self.remove_change(k, false);
                 match self.hc_type {
                     HistoryCacheType::Writer => {
-                        self.unprocessed_seqnum.remove(&k.seq_num);
+                        let ih = self.changes.get(k).unwrap().instance_handle;
+                        if let Some(v) = self.unprocessed_seqnum.get_mut(&ih) {
+                            v.remove(&k.seq_num);
+                        }
                     }
                     HistoryCacheType::Reader => {
                         self.taken_key.remove(k);
@@ -1055,7 +1072,7 @@ impl HistoryCache {
 
     ///taken: Used exclusively by the Reader's HistoryCache. It does not affect behavior in any other context. Indicates whether this method has been called via a DataReader::take call.
     pub fn remove_change(&mut self, key: &HCKey, taken: bool) {
-        if self.unprocessed_seqnum.contains(&key.seq_num) {
+        if self.unprocessed_contains(key) {
             return;
         }
         if let Some(c) = self.changes.remove(key) {
@@ -1115,7 +1132,7 @@ impl HistoryCache {
     pub fn get_seq_num_min(&self) -> SequenceNumber {
         let mut min = SequenceNumber::MAX;
         for k in self.changes.keys() {
-            if k.seq_num < min && !self.unprocessed_seqnum.contains(&k.seq_num) {
+            if k.seq_num < min && !self.unprocessed_contains(k) {
                 min = k.seq_num;
             }
         }
@@ -1128,7 +1145,7 @@ impl HistoryCache {
     pub fn get_seq_num_max(&self) -> SequenceNumber {
         let mut max = SequenceNumber::MIN;
         for k in self.changes.keys() {
-            if k.seq_num > max && !self.unprocessed_seqnum.contains(&k.seq_num) {
+            if k.seq_num > max && !self.unprocessed_contains(k) {
                 max = k.seq_num;
             }
         }

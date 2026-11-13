@@ -95,7 +95,7 @@ pub trait RtpsReader: Any + Send {
     ) -> Option<ReaderTimer>;
     fn handle_hb_response_timeout(&mut self, writer_guid: GUID);
     fn handle_gap(&mut self, writer_guid: GUID, gap: &Gap);
-    fn notify_reqested_deadline_missed(&self, writer_guid: GUID);
+    fn notify_reqested_deadline_missed(&self, writer_guid: GUID, instance_handle: InstanceHandle);
     fn remove_change_if_exist(&mut self, key: HCKey);
     fn is_contain_writer(&self, writer_guid: GUID) -> bool;
     fn get_matched_writer_qos(&self, writer_guid: GUID) -> &DataWriterQosPolicies;
@@ -824,10 +824,11 @@ where
             );
         }
     }
-    fn notify_reqested_deadline_missed(&self, writer_guid: GUID) {
+    fn notify_reqested_deadline_missed(&self, writer_guid: GUID, instance_handle: InstanceHandle) {
         self.reader_state_notifier
             .send(DataReaderStatusChanged::RequestedDeadlineMissed(
                 writer_guid,
+                instance_handle,
             ))
             .expect("failed to send data via channel 'reader_state_notifier'");
         info!("Reader requested deadline missed\n\tReader: {}", self.guid);
@@ -1043,7 +1044,7 @@ impl<R: for<'a> Readable<'a, Endianness> + DdsData + Send + 'static> Reader<R> {
 pub enum DataReaderStatusChanged {
     SampleRejected,
     LivelinessChanged(LivelinessChangedStatus),
-    RequestedDeadlineMissed(GUID),
+    RequestedDeadlineMissed(GUID, InstanceHandle),
     RequestedIncompatibleQos(String),
     DataAvailable,
     SampleLost,
