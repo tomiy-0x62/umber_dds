@@ -14,6 +14,9 @@ use std::time::{Duration, SystemTime};
 use umber_dds::dds::{qos::*, DataWriterStatusChanged, DomainParticipant};
 use umber_dds::{DdsData, DdsSerialize, KeyHash};
 
+#[path = "../fleet_tracking_tui/mod.rs"]
+mod fleet_tracking_tui;
+
 #[derive(Clone, Debug, DdsData, DdsSerialize)]
 struct VehiclePosition {
     #[key]
@@ -43,6 +46,7 @@ impl VehiclePosition {
 }
 
 fn main() {
+    let mut tui = fleet_tracking_tui::Tui::new();
     if let Err(_e) = init_file("shapes_logging.yml", Deserializers::default()) {
         let stderr = ConsoleAppender::builder()
             .target(log4rs::append::console::Target::Stderr)
@@ -92,7 +96,6 @@ fn main() {
 
     let (stop_sender, stop_receiver) = mio_channel::sync_channel::<()>(1);
     ctrlc::set_handler(move || {
-        println!("SIGINT received");
         stop_sender
             .send(())
             .expect("Could not send signal on channel.");
@@ -142,22 +145,22 @@ fn main() {
                             DataWriterStatusChanged::PublicationMatched(state) => {
                                 match state.current_count_change {
                                     1 => {
-                                        println!("PublicationMatched, {}", state.guid);
+                                        tui.log(format!("PublicationMatched, {}", state.guid));
                                     }
                                     -1 => {
-                                        println!("PublicationUnmatched, {}", state.guid);
+                                        tui.log(format!("PublicationUnmatched, {}", state.guid));
                                     }
                                     _ => unreachable!(),
                                 }
                             }
                             DataWriterStatusChanged::OfferedIncompatibleQos(e) => {
-                                println!("OfferedIncompatibleQos:\n{}", e);
+                                tui.log(format!("OfferedIncompatibleQos:\n{}", e));
                             }
                             DataWriterStatusChanged::LivelinessLost(_) => {
-                                println!("LivelinessLost");
+                                tui.log("LivelinessLost");
                             }
                             DataWriterStatusChanged::OfferedDeadlineMissed => {
-                                println!("Deadline missed");
+                                tui.log("Deadline missed");
                             }
                         }
                     }
@@ -166,7 +169,7 @@ fn main() {
                     for vp in &mut vehicles {
                         vp.update(&mut rng);
                         datawriter.write(&vp);
-                        println!("send: {:?}", vp);
+                        tui.update_vehicle(vp.vehicle_id.clone(), vp.latitude, vp.longitude);
                     }
                     w_timer.set_timeout(UPDATE_PERIOD, ());
                 }
@@ -179,7 +182,8 @@ fn main() {
                     for i in (0..vehicles.len()).rev() {
                         if rng.gen_bool(PROB) {
                             let vp = vehicles.swap_remove(i);
-                            println!("remove: {:?}", vp);
+                            tui.remove_vehicle(&vp.vehicle_id);
+                            tui.log(format!("remove: {:?}", vp.vehicle_id));
                             datawriter.dispose(vp);
                         }
                     }

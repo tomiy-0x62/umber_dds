@@ -15,6 +15,9 @@ use std::time::{Duration, SystemTime};
 use umber_dds::dds::{qos::*, sample::InstanceHandle, DataReaderStatusChanged, DomainParticipant};
 use umber_dds::{DdsData, DdsDeserialize, KeyHash};
 
+#[path = "../fleet_tracking_tui/mod.rs"]
+mod fleet_tracking_tui;
+
 #[derive(Clone, Debug, DdsData, DdsDeserialize)]
 struct VehiclePosition {
     #[key]
@@ -24,6 +27,7 @@ struct VehiclePosition {
 }
 
 fn main() {
+    let mut tui = fleet_tracking_tui::Tui::new();
     if let Err(_e) = init_file("shapes_logging.yml", Deserializers::default()) {
         let stderr = ConsoleAppender::builder()
             .target(log4rs::append::console::Target::Stderr)
@@ -66,7 +70,6 @@ fn main() {
 
     let (stop_sender, stop_receiver) = mio_channel::sync_channel::<()>(1);
     ctrlc::set_handler(move || {
-        println!("SIGINT received");
         stop_sender
             .send(())
             .expect("Could not send signal on channel.");
@@ -107,13 +110,18 @@ fn main() {
                                                 data.vehicle_id.clone(),
                                             );
                                         }
-                                        println!("received: {:?}, {}", data, si.instance_handle);
+                                        tui.update_vehicle(
+                                            data.vehicle_id.clone(),
+                                            data.latitude,
+                                            data.longitude,
+                                        );
                                     } else {
                                         let ih = si.instance_handle;
                                         if let Some(vid) = ih2vid.get(&ih) {
-                                            println!("vehicle: {} is deleted", vid);
+                                            tui.remove_vehicle(vid);
+                                            tui.log(format!("vehicle: {} is deleted", vid));
                                         } else {
-                                            println!("received unknown instance: {}", ih);
+                                            tui.log(format!("received unknown instance: {}", ih));
                                         }
                                     }
                                 }
@@ -121,25 +129,25 @@ fn main() {
                             DataReaderStatusChanged::SubscriptionMatched(state) => {
                                 match state.current_count_change {
                                     1 => {
-                                        println!("SubscriptionMatched, {}", state.guid);
+                                        tui.log(format!("SubscriptionMatched, {}", state.guid));
                                     }
                                     -1 => {
-                                        println!("SubscriptionUnmatched, {}", state.guid);
+                                        tui.log(format!("SubscriptionUnmatched, {}", state.guid));
                                     }
                                     _ => unreachable!(),
                                 }
                             }
                             DataReaderStatusChanged::RequestedIncompatibleQos(e) => {
-                                println!("RequestedIncompatibleQos:\n{}", e);
+                                tui.log(format!("RequestedIncompatibleQos:\n{}", e));
                             }
                             DataReaderStatusChanged::LivelinessChanged(l) => {
-                                println!(
+                                tui.log(format!(
                                     "LivelinessChanged: alive:{}, not_alive: {}, guid: {}",
                                     l.alive_count_change, l.not_alive_count_change, l.guid
-                                );
+                                ));
                             }
                             DataReaderStatusChanged::RequestedDeadlineMissed(w, ih) => {
-                                println!("Deadline missed: {}, {}", w, ih);
+                                tui.log(format!("Deadline missed: {}, {}", w, ih));
                             }
                             _ => (), // TODO
                         }
