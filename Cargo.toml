@@ -24,7 +24,6 @@ enumflags2 = { version = "0.7.7", default-features = false, features = [
     "serde",
 ] }
 mio_v06 = { package = "mio", version = "0.6.23" }
-mio_v08 = { package = "mio", version = "0.8.11", features = ["os-poll", "net"] }
 mio-extras = "2.0.6"
 rand = { version = "0.8", default-features = false, features = ["small_rng"] }
 socket2 = "0.5"
