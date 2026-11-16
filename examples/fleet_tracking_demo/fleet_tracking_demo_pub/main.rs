@@ -34,12 +34,14 @@ impl VehiclePosition {
         let digest = md5::compute(time_str.as_bytes());
         Self {
             vehicle_id: format!("{:x}", digest),
+            // Randomly determine the vehicle's initial position.
             latitude: rng.gen(),
             longitude: rng.gen(),
         }
     }
 
     fn update(&mut self, rng: &mut ThreadRng) {
+        // Randomly update the vehicle's position.
         self.latitude += rng.gen::<f64>();
         self.longitude += rng.gen::<f64>();
     }
@@ -80,9 +82,11 @@ fn main() {
     let mut small_rng = rand::rngs::SmallRng::seed_from_u64(now.as_nanos() as u64);
 
     let domain_id = 0;
-    // You should specify some Network Interface that DDS use.
-    // let nic = vec![std::net::Ipv4Addr::new(127, 0, 0, 1)];
-    let nic = Vec::new();
+    // Network interface used for communication.
+    // If the Subscriber cannot communicate with localhost (for example, Pub:
+    // 192.168.1.2 and Sub: 192.168.1.3), specify the appropriate IP address
+    // (192.168.1.2 in this example).
+    let nic = vec![std::net::Ipv4Addr::new(127, 0, 0, 1)];
     let participant = DomainParticipant::new(domain_id, nic, None, &mut small_rng);
     let topic_qos = TopicQosBuilder::new()
         .reliability(policy::Reliability::default_besteffort())
@@ -130,7 +134,6 @@ fn main() {
 
     let mut vehicles: Vec<VehiclePosition> = Vec::new();
     let mut rng = rand::thread_rng();
-    // let is_true = rng.gen_bool(PROB);
     let v = VehiclePosition::new(&mut rng);
     vehicles.push(v);
 
@@ -168,6 +171,7 @@ fn main() {
                 WRITER_TIMER => {
                     for vp in &mut vehicles {
                         vp.update(&mut rng);
+                        // Send the updated vehicle position.
                         datawriter.write(&vp);
                         tui.update_vehicle(vp.vehicle_id.clone(), vp.latitude, vp.longitude);
                     }
@@ -175,6 +179,8 @@ fn main() {
                 }
                 GEN_TIMER => {
                     let v = VehiclePosition::new(&mut rng);
+                    datawriter.write(&v);
+                    tui.update_vehicle(v.vehicle_id.clone(), v.latitude, v.longitude);
                     vehicles.push(v);
                     gen_timer.set_timeout(GEN_PERIOD, ());
                 }
@@ -184,6 +190,7 @@ fn main() {
                             let vp = vehicles.swap_remove(i);
                             tui.remove_vehicle(&vp.vehicle_id);
                             tui.log(format!("remove: {:?}", vp.vehicle_id));
+                            // Notify the Subscriber that the vehicle was deleted.
                             datawriter.dispose(vp);
                         }
                     }
@@ -196,7 +203,7 @@ fn main() {
                     }
                     break 'pub_loop;
                 }
-                _ => (), // unreachable
+                token => unreachable!("unknown token: {:?}", token),
             }
         }
     }

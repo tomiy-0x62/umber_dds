@@ -132,6 +132,12 @@ At the beginning of this program, logging for Umber DDS behavior is initialized 
 
 This is used for test/test.sh.
 
+#### fleet_tracking_demo
+
+An application demonstrating DDS instances.
+
+For details, see [fleet_tracking_demo README](examples/fleet_tracking_demo/README.md).
+
 ## Interoperability
 - [x] Fast DDS
 - [x] RustDDS

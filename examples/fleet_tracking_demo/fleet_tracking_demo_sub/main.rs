@@ -54,9 +54,11 @@ fn main() {
     let mut small_rng = rand::rngs::SmallRng::seed_from_u64(now.as_nanos() as u64);
 
     let domain_id = 0;
-    // You should specify some Network Interface that DDS use.
-    // let nic = vec![std::net::Ipv4Addr::new(127, 0, 0, 1)];
-    let nic = Vec::new();
+    // Network interface used for communication.
+    // If the Subscriber cannot communicate with localhost (for example, Pub:
+    // 192.168.1.2 and Sub: 192.168.1.3), specify the appropriate IP address
+    // (192.168.1.3 in this example).
+    let nic = vec![std::net::Ipv4Addr::new(127, 0, 0, 1)];
     let participant = DomainParticipant::new(domain_id, nic, None, &mut small_rng);
     let topic_qos = TopicQosBuilder::new()
         .reliability(policy::Reliability::default_besteffort())
@@ -88,6 +90,8 @@ fn main() {
     poll.register(&stop_receiver, STOP, Ready::readable(), PollOpt::edge())
         .unwrap();
 
+    // Keep the mapping between the InstanceHandle used by DDS to identify an
+    // instance and the vehicle ID.
     let mut ih2vid: HashMap<InstanceHandle, String> = HashMap::new();
 
     'sub_loop: loop {
@@ -103,6 +107,8 @@ fn main() {
                                 for vehicle in received_vehicles {
                                     let si = vehicle.sample_info();
                                     if si.valid_data {
+                                        // The sample contains valid data, so update
+                                        // the vehicle's position.
                                         let data = vehicle.data().unwrap();
                                         if !ih2vid.contains_key(&si.instance_handle) {
                                             ih2vid.insert(
@@ -116,6 +122,8 @@ fn main() {
                                             data.longitude,
                                         );
                                     } else {
+                                        // The sample contains no valid data because
+                                        // the instance was disposed, so remove the vehicle.
                                         let ih = si.instance_handle;
                                         if let Some(vid) = ih2vid.get(&ih) {
                                             tui.remove_vehicle(vid);
@@ -149,14 +157,14 @@ fn main() {
                             DataReaderStatusChanged::RequestedDeadlineMissed(w, ih) => {
                                 tui.log(format!("Deadline missed: {}, {}", w, ih));
                             }
-                            _ => (), // TODO
+                            _ => (), // ignore
                         }
                     }
                 }
                 STOP => {
                     break 'sub_loop;
                 }
-                _ => (), // unreachable
+                token => unreachable!("unknown token: {:?}", token),
             }
         }
     }

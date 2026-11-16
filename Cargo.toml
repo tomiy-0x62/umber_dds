@@ -50,3 +50,11 @@ default = ["std"]
 std = ["dep:chrono", "awkernel_sync/std"]
 awkernel_x86 = ["awkernel_sync/x86"]
 awkernel_aarch64 = ["awkernel_sync/aarch64"]
+
+[[example]]
+name = "fleet_tracking_demo_pub"
+path = "examples/fleet_tracking_demo/fleet_tracking_demo_pub/main.rs"
+
+[[example]]
+name = "fleet_tracking_demo_sub"
+path = "examples/fleet_tracking_demo/fleet_tracking_demo_sub/main.rs"

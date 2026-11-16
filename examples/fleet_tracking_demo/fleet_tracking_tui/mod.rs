@@ -86,8 +86,6 @@ impl Tui {
         )
         .expect("failed to draw the TUI");
         for (vehicle_id, latitude, longitude) in vehicle_rows {
-            //vehicle_id
-            // 287c7db5c797c9c52819081a272fe01e
             writeln!(
                 output,
                 "| {:<vehicle_id_width$} | {:<latitude_width$} | {:<longitude_width$} |",
