@@ -1,7 +1,6 @@
 use crate::dds::{
     key::KeyHash,
     qos::{policy::ReliabilityQosKind, DataReaderQosPolicies, DataWriterQosPolicies},
-    sample::InstanceStateKind,
     Topic,
 };
 use crate::discovery::{
@@ -18,7 +17,8 @@ use crate::message::submessage::{
 };
 use crate::network::udp_sender::UdpSender;
 use crate::rtps::cache::{
-    CacheChangeIng, DataMsgKind, HCKey, HistoryCache, HistoryCacheType, InstanceHandle, PayloadKind,
+    CacheChangeIng, DataMsgKind, HCKey, HistoryCache, HistoryCacheType, InstanceHandle,
+    PayloadKind, WriterInstanceStateKind,
 };
 use crate::structure::{
     Duration, EntityId, GuidPrefix, RTPSEntity, ReaderProxy, TopicKind, WriterProxy, GUID,
@@ -398,7 +398,7 @@ where
                 .unwrap_or(
                     w.reader_register_instance(
                         key_hash,
-                        InstanceStateKind::Alive,
+                        WriterInstanceStateKind::Alive,
                         writer_guid,
                         self.qos.ownership(),
                         self.matched_writers

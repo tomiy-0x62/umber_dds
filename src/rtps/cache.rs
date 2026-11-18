@@ -286,10 +286,18 @@ impl core::fmt::Display for HistoryCacheType {
     }
 }
 
+#[derive(PartialEq, Clone, Copy, Debug)]
+pub enum WriterInstanceStateKind {
+    Alive,
+    Disposed,
+    Unregistered,
+    UnregisteredDisposed,
+}
+
 struct WtierInstanceInfo {
     owner_ship: Ownership,
     owner_ship_strength: OwnershipStrength,
-    instance_state: InstanceStateKind,
+    instance_state: WriterInstanceStateKind,
 }
 
 pub(crate) struct HistoryCache {
@@ -419,7 +427,7 @@ impl HistoryCache {
     pub fn reader_register_instance(
         &mut self,
         keyhash: KeyHash,
-        instance_state: InstanceStateKind,
+        instance_state: WriterInstanceStateKind,
         writer_guid: GUID,
         owner_ship: Ownership,
         owner_ship_strength: OwnershipStrength,
@@ -475,7 +483,7 @@ impl HistoryCache {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
         if let Some(v) = self.remote_writer_instance_state.get(&instance_handle) {
             match v.get(&writer_guid) {
-                Some(wi) => wi.instance_state == InstanceStateKind::Alive,
+                Some(wi) => wi.instance_state == WriterInstanceStateKind::Alive,
                 None => false,
             }
         } else {
@@ -500,14 +508,18 @@ impl HistoryCache {
                     if wi.owner_ship == Ownership::Shared {
                         return true;
                     }
-                    if wi.instance_state == InstanceStateKind::Alive {
-                        target_strength = Some(wi.owner_ship_strength);
-                        most_strong = core::cmp::max(wi.owner_ship_strength, most_strong);
-                    } else {
-                        return false;
+                    match wi.instance_state {
+                        WriterInstanceStateKind::Alive | WriterInstanceStateKind::Disposed => {
+                            target_strength = Some(wi.owner_ship_strength);
+                            most_strong = core::cmp::max(wi.owner_ship_strength, most_strong);
+                        }
+                        WriterInstanceStateKind::Unregistered
+                        | WriterInstanceStateKind::UnregisteredDisposed => return false,
                     }
                 } else {
-                    if wi.instance_state == InstanceStateKind::Alive {
+                    if wi.instance_state == WriterInstanceStateKind::Alive
+                        || wi.instance_state == WriterInstanceStateKind::Disposed
+                    {
                         most_strong = core::cmp::max(wi.owner_ship_strength, most_strong);
                     }
                 }
@@ -564,7 +576,7 @@ impl HistoryCache {
                     if data_msg_kind == DataMsgKind::Data {
                         self.update_remote_instance_state(
                             ih,
-                            InstanceStateKind::Alive,
+                            WriterInstanceStateKind::Alive,
                             change.writer_guid,
                             owner_ship.unwrap(),
                             is_owner_first,
@@ -572,10 +584,20 @@ impl HistoryCache {
                     } else {
                         if let Some(iq) = change.inline_qos {
                             if let Some(si) = iq.status_info {
-                                if si.contains(StatusInfoFlag::Disposed) {
+                                if si.contains(StatusInfoFlag::Disposed)
+                                    && si.contains(StatusInfoFlag::Unregistered)
+                                {
                                     self.update_remote_instance_state(
                                         ih,
-                                        InstanceStateKind::NotAliveDisposed,
+                                        WriterInstanceStateKind::UnregisteredDisposed,
+                                        change.writer_guid,
+                                        owner_ship.unwrap(),
+                                        is_owner_first,
+                                    );
+                                } else if si.contains(StatusInfoFlag::Disposed) {
+                                    self.update_remote_instance_state(
+                                        ih,
+                                        WriterInstanceStateKind::Disposed,
                                         change.writer_guid,
                                         owner_ship.unwrap(),
                                         is_owner_first,
@@ -583,7 +605,7 @@ impl HistoryCache {
                                 } else if si.contains(StatusInfoFlag::Unregistered) {
                                     self.update_remote_instance_state(
                                         ih,
-                                        InstanceStateKind::NotAliveNoWriters,
+                                        WriterInstanceStateKind::Unregistered,
                                         change.writer_guid,
                                         owner_ship.unwrap(),
                                         is_owner_first,
@@ -838,7 +860,7 @@ impl HistoryCache {
     fn update_remote_instance_state(
         &mut self,
         instance_handle: InstanceHandle,
-        instance_state: InstanceStateKind,
+        w_instance_state: WriterInstanceStateKind,
         writer_guid: GUID,
         owner_ship: Ownership,
         is_owner: bool,
@@ -846,13 +868,13 @@ impl HistoryCache {
         assert_eq!(self.hc_type, HistoryCacheType::Reader);
         debug!(
             "update_remote_instance_state: {:?}, {:?}",
-            instance_handle, instance_state
+            instance_handle, w_instance_state
         );
 
         // update writer insatnce state
         if let Some(v) = self.remote_writer_instance_state.get_mut(&instance_handle) {
             if let Some(wi) = v.get_mut(&writer_guid) {
-                wi.instance_state = instance_state;
+                wi.instance_state = w_instance_state;
             } else {
                 unreachable!("attempt to udpate state of unkown writer");
             }
@@ -863,34 +885,31 @@ impl HistoryCache {
         // update instance state
         if !(owner_ship == Ownership::Exclusive && !is_owner) {
             if let Some(is) = self.instance_state.get_mut(&instance_handle) {
-                if is.state == instance_state {
-                    return;
-                };
-
                 match is.state {
-                    InstanceStateKind::Alive => match instance_state {
-                        InstanceStateKind::Alive => unreachable!(),
-                        InstanceStateKind::NotAliveDisposed => {
+                    InstanceStateKind::Alive => match w_instance_state {
+                        WriterInstanceStateKind::Alive => (),
+                        WriterInstanceStateKind::Disposed
+                        | WriterInstanceStateKind::UnregisteredDisposed => {
                             debug!(
                                 "update_remote_instance_state: {:?}, {:?}, Alive to Disposed",
-                                instance_handle, instance_state
+                                instance_handle, w_instance_state
                             );
                             is.state = InstanceStateKind::NotAliveDisposed;
                         }
-                        InstanceStateKind::NotAliveNoWriters => {
+                        WriterInstanceStateKind::Unregistered => {
                             if let Some(wiv) =
                                 self.remote_writer_instance_state.get(&instance_handle)
                             {
                                 let mut instance_alive = false;
                                 for wi in wiv.values() {
-                                    if wi.instance_state == InstanceStateKind::Alive {
+                                    if wi.instance_state == WriterInstanceStateKind::Alive {
                                         instance_alive = true;
                                     }
                                 }
                                 if !instance_alive {
                                     debug!(
                                         "update_remote_instance_state: {:?}, {:?}, Alive to NoWriters",
-                                        instance_handle, instance_state
+                                        instance_handle, w_instance_state
                                     );
                                     is.state = InstanceStateKind::NotAliveNoWriters;
                                 }
@@ -899,39 +918,39 @@ impl HistoryCache {
                             }
                         }
                     },
-                    InstanceStateKind::NotAliveDisposed => match instance_state {
-                        InstanceStateKind::Alive => {
+                    InstanceStateKind::NotAliveDisposed => match w_instance_state {
+                        WriterInstanceStateKind::Alive => {
                             debug!(
                                 "update_remote_instance_state: {:?}, {:?}, Disposed to Alive",
-                                instance_handle, instance_state
+                                instance_handle, w_instance_state
                             );
                             is.state = InstanceStateKind::Alive;
                             is.disposed_generation_count += 1;
                             is.viewed = false;
                         }
-                        InstanceStateKind::NotAliveDisposed => unreachable!(),
-                        InstanceStateKind::NotAliveNoWriters => {
-                            // do nothing
-                        }
+                        WriterInstanceStateKind::Disposed
+                        | WriterInstanceStateKind::Unregistered
+                        | WriterInstanceStateKind::UnregisteredDisposed => (),
                     },
-                    InstanceStateKind::NotAliveNoWriters => match instance_state {
-                        InstanceStateKind::Alive => {
+                    InstanceStateKind::NotAliveNoWriters => match w_instance_state {
+                        WriterInstanceStateKind::Alive => {
                             debug!(
                                 "update_remote_instance_state: {:?}, {:?}, NoWriters to Alive",
-                                instance_handle, instance_state
+                                instance_handle, w_instance_state
                             );
                             is.state = InstanceStateKind::Alive;
                             is.no_writers_generation_count += 1;
                             is.viewed = false;
                         }
-                        InstanceStateKind::NotAliveDisposed => {
+                        WriterInstanceStateKind::Disposed
+                        | WriterInstanceStateKind::UnregisteredDisposed => {
                             debug!(
                                 "update_remote_instance_state: {:?}, {:?}, NoWriters to Disposed",
-                                instance_handle, instance_state
+                                instance_handle, w_instance_state
                             );
                             is.state = InstanceStateKind::NotAliveDisposed;
                         }
-                        InstanceStateKind::NotAliveNoWriters => unreachable!(),
+                        WriterInstanceStateKind::Unregistered => (),
                     },
                 }
             }
