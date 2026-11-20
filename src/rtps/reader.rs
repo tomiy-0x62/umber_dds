@@ -574,7 +574,7 @@ where
             match disc_db.read_remote_writer(*guid) {
                 EndpointState::Live(last_added) => {
                     let elapse =
-                        Timestamp::now().expect("failed to get Timestamp::now()") - last_added;
+                        Timestamp::now().expect("failed to get Timestamp::now()").checked_duration_since(&last_added).unwrap();
                     if elapse > wld.into() {
                         trace!("checked liveliness of writer Lost, ld: {:?}, elapse: {:?}\n\tReader: {}\n\tWriter: {}", wld, elapse, self.guid, guid);
                         to_unmatch.push(*guid);

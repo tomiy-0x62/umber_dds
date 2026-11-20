@@ -18,7 +18,6 @@ pub(crate) use {
 };
 
 use crate::message::message_receiver::MessageError;
-use crate::structure::Duration;
 use crate::structure::ParameterId;
 use crate::utils::pad_len;
 use crate::KeyHash;
@@ -352,12 +351,12 @@ impl<C: Context> Writable<C> for ParameterList {
     }
 }
 
-#[derive(PartialEq, Eq, Readable, Writable, Clone, Copy, Debug)]
+#[derive(PartialEq, Eq, Readable, Writable, Clone, Copy, Debug, PartialOrd, Ord)]
 pub struct Timestamp {
     // time in seconds
-    pub seconds: u32,
+    pub(crate) seconds: u32,
     // time in seconds/2^32
-    pub fraction: u32,
+    pub(crate) fraction: u32,
 }
 
 #[allow(dead_code)]
@@ -384,26 +383,106 @@ impl Timestamp {
             fraction: fraction as u32,
         })
     }
+
+    /// Returns an `Option<(i64, u32)>` compatible with `chrono::DateTime::from_timestamp(secs, nsecs)`.
+    ///
+    /// Returns `None` if `self` is [`Self::TIME_INVALID`] or [`Self::TIME_INFINITE`].
+    pub const fn as_timestamp(&self) -> Option<(i64, u32)> {
+        if matches!(*self, Timestamp::TIME_INVALID | Timestamp::TIME_INFINITE) {
+            return None;
+        }
+        let secs = self.seconds as i64;
+        let nsecs = (((self.fraction as u64) * 1_000_000_000) >> 32) as u32;
+        Some((secs, nsecs))
+    }
+
+    /// Returns an `Option<i64>` compatible with `chrono::DateTime::from_timestamp_secs(secs)`.
+    ///
+    /// Returns `None` if `self` is [`Self::TIME_INVALID`] or [`Self::TIME_INFINITE`].
+    pub const fn as_timestamp_secs(&self) -> Option<i64> {
+        if matches!(*self, Timestamp::TIME_INVALID | Timestamp::TIME_INFINITE) {
+            return None;
+        }
+        Some(self.seconds as i64)
+    }
+
+    /// Returns an `Option<i64>` compatible with `chrono::DateTime::from_timestamp_millis(millis)`.
+    ///
+    /// Returns `None` if `self` is [`Self::TIME_INVALID`] or [`Self::TIME_INFINITE`].
+    pub const fn as_timestamp_millis(&self) -> Option<i64> {
+        if matches!(*self, Timestamp::TIME_INVALID | Timestamp::TIME_INFINITE) {
+            return None;
+        }
+        let millis = ((self.fraction as u64) * 1_000) >> 32;
+        Some((self.seconds as i64) * 1_000 + (millis as i64))
+    }
+
+    /// Returns an `Option<i64>` compatible with `chrono::DateTime::from_timestamp_micros(micros)`.
+    ///
+    /// Returns `None` if `self` is [`Self::TIME_INVALID`] or [`Self::TIME_INFINITE`].
+    pub const fn as_timestamp_micros(&self) -> Option<i64> {
+        if matches!(*self, Timestamp::TIME_INVALID | Timestamp::TIME_INFINITE) {
+            return None;
+        }
+        let micros = ((self.fraction as u64) * 1_000_000) >> 32;
+        Some((self.seconds as i64) * 1_000_000 + (micros as i64))
+    }
+
+    /// Returns an `Option<i64>` compatible with `chrono::DateTime::from_timestamp_nanos(nanos)`.
+    ///
+    /// Returns `None` if `self` is [`Self::TIME_INVALID`] or [`Self::TIME_INFINITE`].
+    pub const fn as_timestamp_nanos(&self) -> Option<i64> {
+        if matches!(*self, Timestamp::TIME_INVALID | Timestamp::TIME_INFINITE) {
+            return None;
+        }
+        let nanos = ((self.fraction as u64) * 1_000_000_000) >> 32;
+        Some((self.seconds as i64) * 1_000_000_000 + (nanos as i64))
+    }
+
+    /// Packs `seconds` and `fraction` into a Q32.32 fixed-point `u64`.
+    #[inline]
+    const fn as_q32_32(&self) -> u64 {
+        ((self.seconds as u64) << 32) | (self.fraction as u64)
+    }
+
+    /// Converts a Q32.32 fixed-point difference into a [`Duration`].
+    #[inline]
+    const fn duration_from_q32_32(diff: u64) -> CoreDuration {
+        let secs = diff >> 32;
+        let frac = (diff as u32) as u64;
+        let nanos = ((frac * 1_000_000_000) >> 32) as u32;
+        CoreDuration::new(secs, nanos)
+    }
+
+    /// Returns the amount of time elapsed from another timestamp to this one,
+    /// or `None` if that timestamp is later than this one.
+    ///
+    /// Returns `None` if either `self` or `earlier` is [`Self::TIME_INVALID`] or [`Self::TIME_INFINITE`].
+    pub const fn checked_duration_since(&self, earlier: &Self) -> Option<CoreDuration> {
+        if matches!(*self, Timestamp::TIME_INVALID | Timestamp::TIME_INFINITE)
+            || matches!(*earlier, Timestamp::TIME_INVALID | Timestamp::TIME_INFINITE)
+        {
+            return None;
+        }
+        let lhs = self.as_q32_32();
+        let rhs = earlier.as_q32_32();
+        if lhs < rhs {
+            return None;
+        }
+        Some(Self::duration_from_q32_32(lhs - rhs))
+    }
 }
 
 impl fmt::Display for Timestamp {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{}.{}", self.seconds, self.fraction)
-    }
-}
-
-impl Sub for Timestamp {
-    type Output = CoreDuration;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        let lsec = self.seconds as i64;
-        let lnanos = (1_000_000_000 * self.fraction as u64 / (1_u64 << 32)) as i64;
-        let l = lsec * 1_000_000_000 + lnanos;
-        let rsec = rhs.seconds as i64;
-        let rnanos = (1_000_000_000 * rhs.fraction as u64 / (1_u64 << 32)) as i64;
-        let r = rsec * 1_000_000_000 + rnanos;
-
-        Duration::from_nanos(l - r).into()
+        match *self {
+            Self::TIME_INVALID => write!(f, "TIME_INVALID"),
+            Self::TIME_INFINITE => write!(f, "TIME_INFINITE"),
+            _ => {
+                let nanos = ((self.fraction as u64) * 1_000_000_000) >> 32;
+                write!(f, "{}.{:09}", self.seconds, nanos)
+            }
+        }
     }
 }
 
@@ -411,6 +490,12 @@ impl Add<CoreDuration> for Timestamp {
     type Output = Self;
 
     fn add(self, rhs: CoreDuration) -> Self::Output {
+        if self == Self::TIME_INVALID {
+            return Self::TIME_INVALID;
+        }
+        if self == Self::TIME_INFINITE {
+            return Self::TIME_INFINITE;
+        }
         let mut secs = self.seconds as u64 + rhs.as_secs();
         let added_fraction = (rhs.subsec_nanos() as u64 * (1u64 << 32)) / 1_000_000_000;
         let (new_fraction, overflow) = self.fraction.overflowing_add(added_fraction as u32);

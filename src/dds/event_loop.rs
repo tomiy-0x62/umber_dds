@@ -319,7 +319,9 @@ impl EventLoop {
                 }
                 ReaderTimer::Lifespan(reader_entity_id, hc_key, ts, lifespan_duration) => {
                     let now = Timestamp::now().expect("failed get Timestamp::now");
-                    let duration = (*ts + *lifespan_duration) - now;
+                    let duration = (*ts + *lifespan_duration)
+                        .checked_duration_since(&now)
+                        .unwrap();
                     self.reader_lifespan_timer
                         .set_timeout(duration, (*reader_entity_id, *hc_key));
                     trace!(
@@ -538,7 +540,7 @@ impl EventLoop {
                                 if let EndpointState::Live(ts) =
                                     self.discovery_db.read_local_writer(guid)
                                 {
-                                    let duration = now - ts;
+                                    let duration = now.checked_duration_since(&ts).unwrap();
                                     let liveliness = writer.get_qos().liveliness();
                                     if liveliness.kind != LivelinessQosKind::Automatic {
                                         trace!("assert_liveliness continue because not kind Automatic\n\tWriter: {}", guid);

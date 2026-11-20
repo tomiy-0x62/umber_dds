@@ -226,7 +226,10 @@ impl Writer {
         }
         let writer_cache = self.writer_cache.read();
         if let Some(ts) = writer_cache.get_last_added_ts(self.guid) {
-            let elapse = Timestamp::now().expect("failed to get Timestamp::now()") - *ts;
+            let elapse = Timestamp::now()
+                .expect("failed to get Timestamp::now()")
+                .checked_duration_since(ts)
+                .unwrap();
             if elapse > ld.into() {
                 let data = ParticipantMessageData::new(
                     self.guid_prefix(),
@@ -1007,7 +1010,10 @@ impl Writer {
             }
             let writer_cache = self.writer_cache.read();
             if let Some(ts) = writer_cache.get_last_added_ts(self.guid) {
-                let elapse = Timestamp::now().expect("failed to get Timestamp::now()") - *ts;
+                let elapse = Timestamp::now()
+                    .expect("failed to get Timestamp::now()")
+                    .checked_duration_since(ts)
+                    .unwrap();
                 if elapse > ld.into() {
                     self.unmatch_count += 1;
                     self.is_alive = false;
