@@ -155,8 +155,9 @@ For details, see [fleet_tracking_demo README](examples/fleet_tracking_demo/READM
 - [x] RTPS Writer Liveliness Protocol
 - [x] Logging
 - [x] Topics kinds: with_key and no_key
-- [ ] Instance
+- [x] Instance
 - [ ] InlineQoS
+    - [x] STATUS_INFO
 
 ### Supporting QoS
 
@@ -176,16 +177,16 @@ Unsuporting QoS can be set, but it dosn't effect behavior of Umber DDS.
 - [ ] DurabilityService
 - [ ] Presentaion
 - [ ] LatencyBudget
-- [ ] Ownership
-- [ ] OwnershipStrength
+- [x] Ownership
+- [x] OwnershipStrength
 - [ ] TimeBasedFilter
 - [ ] DestinationOrder
-- [X] ResourceLimits
+- [x] ResourceLimits
 - [ ] Partition
 - [ ] UserData
 - [ ] TopicData
 - [ ] GrupData
-- [ ] WriterDataLifecycle
+- [x] WriterDataLifecycle
 - [ ] ReaderDataLifecycle
 - [ ] TransportPrioriry
 - [ ] EntityFactory
