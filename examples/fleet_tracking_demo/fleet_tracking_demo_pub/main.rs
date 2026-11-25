@@ -30,7 +30,7 @@ impl VehiclePosition {
         let now = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap();
-        let time_str = now.as_millis().to_string();
+        let time_str = now.as_nanos().to_string();
         let digest = md5::compute(time_str.as_bytes());
         Self {
             vehicle_id: format!("{:x}", digest),
@@ -42,8 +42,8 @@ impl VehiclePosition {
 
     fn update(&mut self, rng: &mut ThreadRng) {
         // Randomly update the vehicle's position.
-        self.latitude += rng.gen::<f64>();
-        self.longitude += rng.gen::<f64>();
+        self.latitude += rng.gen::<f64>() * 10.0;
+        self.longitude += rng.gen::<f64>() * 10.0;
     }
 }
 
@@ -90,8 +90,6 @@ fn main() {
     let participant = DomainParticipant::new(domain_id, nic, None, &mut small_rng);
     let topic_qos = TopicQosBuilder::new()
         .reliability(policy::Reliability::default_besteffort())
-        // .lifespan(policy::Lifespan::from_secs(1))
-        // .history(policy::History::new(policy::HistoryQosKind::KeepLast, 10))
         .build();
     let topic = participant.create_topic::<VehiclePosition>(
         "Vehicle".to_string(),
@@ -112,7 +110,7 @@ fn main() {
     let publisher = participant.create_publisher(PublisherQos::Default);
     let dw_qos = DataWriterQosBuilder::new()
         .reliability(policy::Reliability::default_besteffort())
-        .deadline(policy::Deadline::new(Duration::from_millis(2000)))
+        .deadline(policy::Deadline::new(Duration::from_millis(1100)))
         .build();
     let mut datawriter = publisher
         .create_datawriter::<VehiclePosition>(DataWriterQos::Policies(Box::new(dw_qos)), topic);
@@ -135,6 +133,8 @@ fn main() {
     let mut vehicles: Vec<VehiclePosition> = Vec::new();
     let mut rng = rand::thread_rng();
     let v = VehiclePosition::new(&mut rng);
+    datawriter.write(&v);
+    tui.update_vehicle(v.vehicle_id.clone(), v.latitude, v.longitude);
     vehicles.push(v);
 
     'pub_loop: loop {

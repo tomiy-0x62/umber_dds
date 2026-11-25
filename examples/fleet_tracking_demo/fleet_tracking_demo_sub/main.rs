@@ -62,8 +62,6 @@ fn main() {
     let participant = DomainParticipant::new(domain_id, nic, None, &mut small_rng);
     let topic_qos = TopicQosBuilder::new()
         .reliability(policy::Reliability::default_besteffort())
-        // .lifespan(policy::Lifespan::from_secs(1))
-        // .history(policy::History::new(policy::HistoryQosKind::KeepLast, 10))
         .build();
     let topic = participant.create_topic::<VehiclePosition>(
         "Vehicle".to_string(),
@@ -81,7 +79,7 @@ fn main() {
     let subscriber = participant.create_subscriber(SubscriberQos::Default);
     let dr_qos = DataReaderQosBuilder::new()
         .reliability(policy::Reliability::default_besteffort())
-        .deadline(policy::Deadline::new(Duration::from_millis(2000)))
+        .deadline(policy::Deadline::new(Duration::from_millis(1100)))
         .build();
     let datareader = subscriber
         .create_datareader::<VehiclePosition>(DataReaderQos::Policies(Box::new(dr_qos)), topic);
