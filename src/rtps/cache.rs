@@ -209,6 +209,7 @@ pub enum ChangeKind {
     _NotAliveUnregistered,
 }
 
+/// The identifier of the instance.
 #[derive(PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Debug, Hash)]
 pub struct InstanceHandle {
     instance_id: u32,
